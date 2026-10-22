@@ -2,10 +2,12 @@ package tray
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/gogpu/systray"
 
@@ -14,6 +16,7 @@ import (
 	"GoDrop/settings"
 )
 
+// Callbacks — обработчики меню трея.
 type Callbacks struct {
 	URL        string
 	StorageDir string
@@ -23,87 +26,235 @@ type Callbacks struct {
 	OnExit          func()
 }
 
+// windowKind — тип вспомогательного окна.
+type windowKind string
+
+const (
+	windowQR       windowKind = "qr"
+	windowSettings windowKind = "settings"
+
+	// windowCloseTimeout — сколько ждать закрытия окон при выходе.
+	windowCloseTimeout = 3 * time.Second
+)
+
+// Run запускает значок в системном трее и блокируется до выхода.
 func Run(callbacks Callbacks) {
 	tray := systray.New()
-	var exitOnce sync.Once
+
+	var (
+		exitOnce sync.Once
+		stateMu  sync.Mutex // защищает поля callbacks, изменяемые из горутин
+		windows  = newWindowTracker()
+	)
+
+	// currentCallbacks возвращает копию данных для обработчика.
+	currentCallbacks := func() Callbacks {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+
+		return callbacks
+	}
 
 	exit := func() {
 		exitOnce.Do(func() {
 			if callbacks.OnExit != nil {
 				callbacks.OnExit()
 			}
+
 			tray.Remove()
 		})
+	}
+
+	// notify показывает уведомление и пишет строку в консоль:
+	// на Windows всплывает подсказка, в остальных системах — хотя бы лог.
+	notify := func(message string) {
+		fmt.Println(message)
+		log.Println(message)
+		tray.ShowNotification("GoDrop!", message)
+	}
+
+	// runWindow запускает окно в отдельной горутине и не даёт открыть
+	// его повторно, пока предыдущее не закрыто.
+	//
+	// Важно: обработчики меню вызываются в потоке цикла сообщений ОС,
+	// поэтому блокировать их (как раньше) нельзя — иначе трей перестаёт
+	// реагировать на клики, пока открыто окно.
+	runWindow := func(kind windowKind, alreadyOpenMessage string, action func()) {
+		if !windows.tryOpen(kind) {
+			notify(alreadyOpenMessage)
+			return
+		}
+
+		go func() {
+			defer windows.close(kind)
+			action()
+		}()
 	}
 
 	menu := systray.NewMenu()
 
 	menu.Add("GoDrop!", func() {
-		if err := settings.ShowQR(callbacks.URL); err != nil {
-			fmt.Println("Ошибка открытия QR-кода:", err)
-		}
+		runWindow(windowQR, "Окно с QR-кодом уже открыто", func() {
+			if err := settings.ShowQR(currentCallbacks().URL); err != nil {
+				notify("Ошибка открытия QR-кода: " + err.Error())
+			}
+		})
 	})
 
 	menu.Add("Хранилище", func() {
-		openFolder(callbacks.StorageDir)
+		if err := openFolder(currentCallbacks().StorageDir); err != nil {
+			notify("Не удалось открыть папку хранилища: " + err.Error())
+		}
 	})
 
 	menu.Add("Настройки", func() {
-		nextConfig, ok := showSettings(callbacks.Config)
-		if !ok || callbacks.OnSettingsSaved == nil {
-			return
-		}
+		runWindow(windowSettings, "Окно настроек уже открыто", func() {
+			nextConfig, ok, err := settings.Show(currentCallbacks().Config)
+			if err != nil {
+				notify("Ошибка окна настроек: " + err.Error())
+				return
+			}
 
-		nextURL, err := callbacks.OnSettingsSaved(nextConfig)
-		if err != nil {
-			fmt.Println("Ошибка сохранения настроек:", err)
-			return
-		}
+			if !ok {
+				return
+			}
 
-		callbacks.Config = nextConfig
-		callbacks.StorageDir = nextConfig.StorageDir
-		callbacks.URL = nextURL
+			cb := currentCallbacks()
+			if cb.OnSettingsSaved == nil {
+				return
+			}
 
-		if err := settings.UpdateQR(nextURL); err != nil {
-			fmt.Println("Ошибка обновления QR-кода:", err)
-		}
+			nextURL, err := cb.OnSettingsSaved(nextConfig)
+			if err != nil {
+				notify("Ошибка сохранения настроек: " + err.Error())
+				return
+			}
+
+			stateMu.Lock()
+			callbacks.Config = nextConfig
+			callbacks.StorageDir = nextConfig.StorageDir
+			callbacks.URL = nextURL
+			stateMu.Unlock()
+
+			if err := settings.UpdateQR(nextURL); err != nil {
+				log.Printf("не удалось обновить QR-код: %v", err)
+			}
+		})
 	})
 
 	menu.AddSeparator()
 
 	menu.Add("Выход", func() {
+		// Remove() останавливает цикл сообщений, tray.Run() возвращается,
+		// и main корректно завершает программу (лог закрывается в defer).
 		exit()
-		os.Exit(0)
 	})
 
 	tray.SetIcon(assets.GoDrop64).
+		SetAppName("GoDrop").
 		SetTooltip("GoDrop — передача файлов").
 		SetMenu(menu)
 
-	// Левый клик ничего не делает; правый открывает контекстное меню.
-	tray.OnRightClick(func() {})
+	// Левый клик открывает окно с QR-кодом — так удобнее, чем лезть в меню.
+	tray.OnClick(func() {
+		runWindow(windowQR, "Окно с QR-кодом уже открыто", func() {
+			if err := settings.ShowQR(currentCallbacks().URL); err != nil {
+				notify("Ошибка открытия QR-кода: " + err.Error())
+			}
+		})
+	})
 
 	tray.Show()
 
 	if err := tray.Run(); err != nil {
 		fmt.Println("Ошибка системного трея:", err)
+		log.Printf("ошибка системного трея: %v", err)
 	}
 
+	// Даём открытым окнам команду закрыться, чтобы после выхода
+	// не остались висеть дочерние процессы.
+	settings.StopWindows()
 	exit()
+
+	windows.wait(windowCloseTimeout)
 }
 
-func showSettings(current config.Config) (config.Config, bool) {
-	return settings.Show(current)
+// windowTracker не даёт открыть одно и то же окно несколько раз.
+type windowTracker struct {
+	mu     sync.Mutex
+	open   map[windowKind]bool
+	closed sync.WaitGroup
 }
 
-func openFolder(path string) {
-	_ = os.MkdirAll(path, 0755)
-
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("explorer.exe", path).Start()
+func newWindowTracker() *windowTracker {
+	return &windowTracker{
+		open: make(map[windowKind]bool),
 	}
 }
 
+// tryOpen помечает окно открытым. Возвращает false, если оно уже открыто.
+func (w *windowTracker) tryOpen(kind windowKind) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.open[kind] {
+		return false
+	}
+
+	w.open[kind] = true
+	w.closed.Add(1)
+
+	return true
+}
+
+// close снимает отметку об окне.
+func (w *windowTracker) close(kind windowKind) {
+	w.mu.Lock()
+	if w.open[kind] {
+		delete(w.open, kind)
+	}
+	w.mu.Unlock()
+
+	w.closed.Done()
+}
+
+// wait ждёт закрытия всех дочерних окон, но не дольше указанного времени.
+// При выходе это нужно, чтобы дочерние окна (Fyne) успели завершиться
+// вместе с программой, а не остались висеть.
+func (w *windowTracker) wait(timeout time.Duration) {
+	done := make(chan struct{})
+
+	go func() {
+		w.closed.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
+
+func openFolder(path string) error {
+	if path == "" {
+		return fmt.Errorf("папка хранилища не задана")
+	}
+
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return err
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("explorer.exe", path).Start()
+	case "darwin":
+		return exec.Command("open", path).Start()
+	default:
+		return exec.Command("xdg-open", path).Start()
+	}
+}
+
+// Address собирает адрес вида http://ip:port.
 func Address(ip string, port int) string {
 	return fmt.Sprintf("http://%s:%d", ip, port)
 }

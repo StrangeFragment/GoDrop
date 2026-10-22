@@ -1,174 +1,283 @@
 <!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>GoDrop!</title>
-    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>GoDrop!</title>
 
-    <style>
-        body {
-            background: #0f0f1a;
-            color: #e8e8f0;
-            font-family: 'Segoe UI', Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 40px 20px;
-            margin: 0;
-        }
-        h1 { 
-            color: #04AA6D; 
-            margin-bottom: 8px; 
-            text-align: center;
-        }
-        p  { 
-            color: #8888aa; 
-            font-size: 14px; 
-            margin-bottom: 24px; 
-        }
-        main {
-            background: #0f0f1a;
-            max-width: 520px;
-            margin: 0 auto;
-            padding: 24px;
-            /*background: white;*/
-            border-radius: 16px;
-        }
-        form{
-            background: #0f0f1a;
-        }
-        input,
-        button {
-            width: 100%;
-            box-sizing: border-box;
-            margin-top: 16px;
-            padding: 14px;
-            font-size: 17px;
-        }
+	<meta name="theme-color" content="#0f0f1a">
+	<meta name="description" content="Передача фотографий и файлов с телефона на компьютер через локальную сеть">
 
-        button {
-            border: 0;
-            border-radius: 8px;
-            background: #1769ff;
-            color: white;
-        }
-        #fileInput {
-            display: none;
-        }
-        .file-button {
-            display: block;
-            width: 100%;
-            box-sizing: border-box;
-            margin-top: 16px;
-            padding: 14px;
-            font-size: 17px;
-            text-align: center;
-            color: white;
-            background: #04AA6D;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .file-button:hover {
-            background: #078957;
-        }
-#fileInput {
-    display: none;
-}
+	<link rel="icon" href="/favicon.ico" type="image/x-icon">
+	<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+	<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+	<link rel="manifest" href="/site.webmanifest">
 
-.file-button {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 16px;
-    padding: 14px;
-    font-size: 17px;
-    text-align: center;
-    color: white;
-    background: #04AA6D;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background 0.2s;
-}
+	<style>
+		* {
+			box-sizing: border-box;
+		}
 
+		body {
+			background: #0f0f1a;
+			color: #e8e8f0;
+			font-family: 'Segoe UI', Arial, sans-serif;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			padding: 24px 16px 40px;
+			margin: 0;
+			min-height: 100vh;
+		}
 
-.file-button:hover {
-    background: #078957;
-}
+		main {
+			width: 100%;
+			max-width: 520px;
+			margin: 0 auto;
+		}
 
-#fileList {
-    margin: 14px 0 0;
-    padding: 0;
-    list-style: none;
-    color: #c8c8d8;
-    font-size: 14px;
-}
+		h1 {
+			color: #04AA6D;
+			margin: 0 0 8px;
+			font-size: 30px;
+			text-align: center;
+		}
 
-#fileList li {
-    padding: 8px 10px;
-    margin-bottom: 6px;
-    background: #191927;
-    border-radius: 6px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+		p {
+			color: #8888aa;
+			font-size: 14px;
+			margin: 0 0 24px;
+			text-align: center;
+			line-height: 1.45;
+		}
 
-button {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 16px;
-    padding: 14px;
-    font-size: 17px;
-    border: 0;
-    border-radius: 8px;
-    background: #1769ff;
-    color: white;
-    cursor: pointer;
-}
+		#fileInput {
+			display: none;
+		}
 
+		.file-button,
+		button[type="submit"] {
+			display: block;
+			width: 100%;
+			margin-top: 16px;
+			padding: 14px;
+			font-size: 17px;
+			text-align: center;
+			color: #fff;
+			border: 0;
+			border-radius: 8px;
+			cursor: pointer;
+		}
 
-button:hover {
-    background: #0d55d4;
-}
+		.file-button {
+			background: #04AA6D;
+		}
 
-    </style>
+		.file-button:active {
+			background: #078957;
+		}
+
+		button[type="submit"] {
+			background: #1769ff;
+		}
+
+		button[type="submit"]:active {
+			background: #0d55d4;
+		}
+
+		button[type="submit"]:disabled {
+			opacity: 0.6;
+			cursor: default;
+		}
+
+		#fileList {
+			margin: 14px 0 0;
+			padding: 0;
+			list-style: none;
+			color: #c8c8d8;
+			font-size: 14px;
+		}
+
+		#fileList li {
+			padding: 8px 10px;
+			margin-bottom: 6px;
+			background: #191927;
+			border-radius: 6px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		#fileList li.rejected {
+			color: #ff8080;
+		}
+
+		.hint {
+			margin: 12px 0 0;
+			font-size: 13px;
+		}
+
+		#progressWrap {
+			margin-top: 16px;
+			display: none;
+		}
+
+		#progressBar {
+			height: 8px;
+			width: 0;
+			background: #04AA6D;
+			border-radius: 4px;
+			transition: width 0.15s linear;
+		}
+
+		#progressTrack {
+			height: 8px;
+			background: #191927;
+			border-radius: 4px;
+			overflow: hidden;
+		}
+
+		#progressText {
+			margin: 8px 0 0;
+			font-size: 13px;
+		}
+
+		footer {
+			margin-top: 24px;
+			color: #8888aa;
+			font-size: 13px;
+			text-align: center;
+		}
+	</style>
 </head>
 <body>
 <main>
-    <h1 text-align="center">GoDrop!</h1>
-    <p style="text-align: center; margin-bottom: 0px;">программа для Windows, которая работает в системном трее и позволяет передавать фотографии и файлы с телефона на компьютер через локальную сеть.</p>
+	<h1>GoDrop!</h1>
+	<p>
+		Программа для Windows, которая работает в системном трее
+		и позволяет передавать фотографии и файлы с телефона
+		на компьютер через локальную сеть.
+	</p>
 
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" id="fileInput" name="files" multiple required>
-        <label for="fileInput" class="file-button">ОБЗОР</label>
-        <ul id="fileList"></ul>
-        <button type="submit">Загрузить</button>
-    </form>
+	<form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+		<input type="file" id="fileInput" name="files" multiple required accept="{{.Accept}}">
+		<label for="fileInput" class="file-button">ОБЗОР</label>
+		<ul id="fileList"></ul>
 
+		<div id="progressWrap">
+			<div id="progressTrack"><div id="progressBar"></div></div>
+			<p id="progressText"></p>
+		</div>
+
+		<button type="submit" id="uploadButton">Загрузить</button>
+		<p class="hint">Можно выбрать несколько файлов сразу. Лимит одной отправки — {{.MaxFileSize}}.</p>
+	</form>
+
+	<p class="hint" id="status"></p>
 </main>
-<br>
-<p>Created by <strong>StrangeFragment</strong>, 2©26</p>
+
+<footer>
+	Created by <strong>StrangeFragment</strong>, 2©26
+</footer>
 
 <script>
-    const fileInput = document.getElementById('fileInput');
-    const fileList = document.getElementById('fileList');
+	(function () {
+		const form = document.getElementById('uploadForm');
+		const fileInput = document.getElementById('fileInput');
+		const fileList = document.getElementById('fileList');
+		const uploadButton = document.getElementById('uploadButton');
+		const progressWrap = document.getElementById('progressWrap');
+		const progressBar = document.getElementById('progressBar');
+		const progressText = document.getElementById('progressText');
+		const status = document.getElementById('status');
 
-    fileInput.addEventListener('change', function () {
-        fileList.innerHTML = '';
+		function formatSize(bytes) {
+			if (bytes < 1024) {
+				return bytes + ' Б';
+			}
 
-        Array.from(fileInput.files).forEach(file => {
-            const li = document.createElement('li');
+			const units = ['КБ', 'МБ', 'ГБ'];
+			let value = bytes / 1024;
+			let index = 0;
 
-            const size = (file.size / 1024 / 1024).toFixed(2);
+			while (value >= 1024 && index < units.length - 1) {
+				value /= 1024;
+				index++;
+			}
 
-            li.textContent = `${file.name} — ${size} МБ`;
-            fileList.appendChild(li);
-        });
-    });
+			return value.toFixed(value < 10 ? 2 : 1) + ' ' + units[index];
+		}
+
+		fileInput.addEventListener('change', function () {
+			fileList.innerHTML = '';
+
+			Array.from(fileInput.files).forEach(function (file) {
+				const li = document.createElement('li');
+
+				li.textContent = file.name + ' — ' + formatSize(file.size);
+				fileList.appendChild(li);
+			});
+		});
+
+		form.addEventListener('submit', function (event) {
+			if (!fileInput.files.length) {
+				return;
+			}
+
+			// Отправляем через XHR, чтобы показать прогресс:
+			// на телефоне большие видео идут долго и важно видеть,
+			// что передача не зависла.
+			event.preventDefault();
+
+			const data = new FormData();
+
+			Array.from(fileInput.files).forEach(function (file) {
+				data.append('files', file, file.name);
+			});
+
+			const request = new XMLHttpRequest();
+
+			request.open('POST', form.action, true);
+
+			uploadButton.disabled = true;
+			progressWrap.style.display = 'block';
+			progressBar.style.width = '0%';
+			progressText.textContent = 'Передача... 0%';
+			status.textContent = '';
+
+			request.upload.addEventListener('progress', function (event) {
+				if (!event.lengthComputable) {
+					return;
+				}
+
+				const percent = Math.round((event.loaded / event.total) * 100);
+
+				progressBar.style.width = percent + '%';
+				progressText.textContent = 'Передача... ' + percent + '%';
+			});
+
+			request.addEventListener('load', function () {
+				uploadButton.disabled = false;
+
+				if (request.status === 200) {
+					document.open();
+					document.write(request.responseText);
+					document.close();
+
+					return;
+				}
+
+				progressText.textContent = 'Ошибка передачи: ' + request.status;
+			});
+
+			request.addEventListener('error', function () {
+				uploadButton.disabled = false;
+				progressText.textContent = 'Ошибка сети. Проверьте, что компьютер в той же сети.';
+			});
+
+			request.send(data);
+		});
+	})();
 </script>
-
-
 </body>
 </html>

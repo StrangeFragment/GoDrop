@@ -1,0 +1,16 @@
+# Сборка
+*.exe
+*.syso
+*.test
+GoDrop
+
+# Артефакты Go
+/vendor/
+coverage.out
+*.log
+
+# Редакторы и ОС
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
