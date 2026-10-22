@@ -53,7 +53,7 @@
 
 ## Сборка
 
-Нужен Go 1.24+ (проект использует Fyne 2.8 и `github.com/gogpu/systray`).
+Нужен Go 1.26+ (`go.mod` объявляет `go 1.26.5`), Fyne 2.8 и `github.com/gogpu/systray`.
 
 ```powershell
 # без консольного окна (обычная сборка «для пользователя»)
