@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +71,14 @@ func TestIndexRendersTemplate(t *testing.T) {
 
 	if !strings.Contains(body, `action="/upload"`) {
 		t.Error("форма не отправляет файлы на /upload")
+	}
+
+	if !strings.Contains(body, `<a href="/files" class="action-button">Все файлы</a>`) {
+		t.Error("ссылка «Все файлы» не использует общий стиль кнопок")
+	}
+
+	if !strings.Contains(body, "['KB', 'MB', 'GB']") {
+		t.Error("размеры файлов в браузере должны отображать KB, MB и GB")
 	}
 }
 
@@ -232,10 +241,11 @@ func TestHumanSize(t *testing.T) {
 	t.Parallel()
 
 	cases := map[int64]string{
-		512:     "512 Б",
-		8 << 30: "8 ГиБ",
-		1536:    "2 КиБ",
-		5 << 20: "5 МиБ",
+		512:     "512 B",
+		1024:    "1 KB",
+		8 << 30: "8 GB",
+		1536:    "2 KB",
+		5 << 20: "5 MB",
 	}
 
 	for size, want := range cases {
@@ -383,6 +393,90 @@ func TestFilesPageListsUploaded(t *testing.T) {
 
 	if !strings.Contains(body, "/files/download?f=") {
 		t.Error("нет ссылки на скачивание")
+	}
+
+	if !strings.Contains(body, `<p class="page-subtitle">Принятые файлы на компьютере</p>`) {
+		t.Error("заголовок списка принятых файлов не оформлен по центру")
+	}
+}
+
+func TestFilesPageSearchAndPagination(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(t)
+	for i := 0; i < filesPageSize+1; i++ {
+		name := fmt.Sprintf("Фото-%03d.jpg", i)
+		if _, err := handler.Storage.SaveStream(name, strings.NewReader("x")); err != nil {
+			t.Fatalf("SaveStream(%q) error: %v", name, err)
+		}
+	}
+	if _, err := handler.Storage.SaveStream("notes.txt", strings.NewReader("not a photo")); err != nil {
+		t.Fatalf("SaveStream(notes.txt) error: %v", err)
+	}
+
+	search := "ФОТО"
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/files?q="+url.QueryEscape(search)+"&page=2",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+	handler.Files(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("код ответа = %d, want 200", recorder.Code)
+	}
+
+	body := recorder.Body.String()
+	if !strings.Contains(body, `value="ФОТО"`) {
+		t.Error("поисковый запрос не сохранён в поле поиска")
+	}
+	if !strings.Contains(body, "Найдено файлов: 51 — 51 B") {
+		t.Error("сводка должна учитывать все совпадения, а не только текущую страницу")
+	}
+	if !strings.Contains(body, "Показано 51–51 из 51 · страница 2 из 2") {
+		t.Error("неверные диапазон или номер страницы")
+	}
+	if !strings.Contains(body, "Фото-000.jpg") {
+		t.Error("последний файл не отображается на второй странице")
+	}
+	if strings.Contains(body, "Фото-001.jpg") {
+		t.Error("файл с первой страницы попал на вторую")
+	}
+	if strings.Contains(body, "notes.txt") {
+		t.Error("поиск не отфильтровал файл, не совпадающий с запросом")
+	}
+	if !strings.Contains(body, `href="/files?page=1&amp;q=%D0%A4%D0%9E%D0%A2%D0%9E"`) {
+		t.Error("ссылка «Назад» не сохраняет поисковый запрос")
+	}
+}
+
+func TestFilesPageNoSearchResults(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(t)
+	if _, err := handler.Storage.SaveStream("report.pdf", strings.NewReader("data")); err != nil {
+		t.Fatalf("SaveStream() error: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.Files(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/files?q=missing", nil),
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("код ответа = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "По запросу «missing» ничего не найдено") {
+		t.Error("не показано сообщение об отсутствии совпадений")
+	}
+	if !strings.Contains(body, `href="/files">Сбросить поиск</a>`) {
+		t.Error("не показана ссылка для сброса поиска")
+	}
+	if strings.Contains(body, "report.pdf") {
+		t.Error("файл попал в список при несовпадающем поиске")
 	}
 }
 

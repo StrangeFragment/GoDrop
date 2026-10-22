@@ -64,6 +64,10 @@ func TestNormalizeFillsDefaults(t *testing.T) {
 	if len(cfg.AllowedExtensions) == 0 {
 		t.Error("AllowedExtensions должен быть непустым")
 	}
+
+	if cfg.FirewallEnabled {
+		t.Error("правило брандмауэра по умолчанию должно быть выключено")
+	}
 }
 
 func TestNormalizeKeepsValidPort(t *testing.T) {
@@ -82,6 +86,13 @@ func TestNormalizeKeepsValidPort(t *testing.T) {
 	if cfg.Port != DefaultPort {
 		t.Errorf("некорректный порт должен заменяться, получено %d", cfg.Port)
 	}
+
+	cfg = Config{FirewallPort: 70000}
+	cfg.Normalize()
+
+	if cfg.FirewallPort != 0 {
+		t.Errorf("некорректный FirewallPort должен обнуляться, получено %d", cfg.FirewallPort)
+	}
 }
 
 func TestSaveAndLoad(t *testing.T) {
@@ -94,6 +105,8 @@ func TestSaveAndLoad(t *testing.T) {
 		StorageDir:        filepath.Join(dir, "files"),
 		Port:              888,
 		StartWithWindows:  true,
+		FirewallEnabled:   true,
+		FirewallPort:      888,
 		AllowedExtensions: []string{".JPG", "png"},
 	}
 
@@ -112,6 +125,14 @@ func TestSaveAndLoad(t *testing.T) {
 
 	if !loaded.StartWithWindows {
 		t.Error("StartWithWindows должен сохраняться")
+	}
+
+	if !loaded.FirewallEnabled {
+		t.Error("FirewallEnabled должен сохраняться")
+	}
+
+	if loaded.FirewallPort != 888 {
+		t.Errorf("FirewallPort = %d, want 888", loaded.FirewallPort)
 	}
 
 	if len(loaded.AllowedExtensions) != 2 {

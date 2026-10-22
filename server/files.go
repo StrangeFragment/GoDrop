@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,8 +17,11 @@ import (
 )
 
 const (
-	// filesPageLimit — сколько файлов показывать на странице.
-	filesPageLimit = 500
+	// filesPageSize — сколько файлов показывать на одной странице.
+	filesPageSize = 50
+
+	// maxFilesSearchLength — ограничивает длину поискового запроса.
+	maxFilesSearchLength = 180
 )
 
 // fileGroup — файлы за один день.
@@ -29,10 +33,19 @@ type fileGroup struct {
 
 // filesPageData — данные страницы "Принятые файлы".
 type filesPageData struct {
-	Groups []fileGroup
-	Total  int
-	Size   int64
-	Empty  bool
+	Groups       []fileGroup
+	Total        int
+	Size         int64
+	Empty        bool
+	Query        string
+	Page         int
+	PageCount    int
+	First        int
+	Last         int
+	HasPrevious  bool
+	HasNext      bool
+	PreviousURL  string
+	NextURL      string
 }
 
 // accessPageData — данные страницы ввода кода доступа.
@@ -116,16 +129,39 @@ var filesTemplate = template.Must(template.New("files").Funcs(pageFuncs).Parse(`
 <body>
 	<main>
 		<h1>GoDrop!</h1>
-		<p>Принятые файлы на компьютере</p>
+		<p class="page-subtitle">Принятые файлы на компьютере</p>
 
-		{{if .Empty}}
-			<div class="card">
-				<p class="error-message">Пока ничего не принято.</p>
-			</div>
-		{{else}}
-			<div class="card">
-				<p class="error-message">
-					Всего файлов: {{.Total}} — {{size .Size}}
+		<div class="card">
+			<form class="search-form" action="/files" method="get" role="search">
+				<label for="fileSearch">Поиск по имени файла</label>
+				<div class="search-controls">
+					<input
+						type="search"
+						id="fileSearch"
+						name="q"
+						value="{{.Query}}"
+						placeholder="Например, фото.jpg"
+						autocomplete="off"
+					>
+					<button type="submit">Найти</button>
+				</div>
+				{{if .Query}}
+					<a class="clear-search" href="/files">Сбросить поиск</a>
+				{{end}}
+			</form>
+
+			{{if .Empty}}
+				{{if .Query}}
+					<p class="error-message">По запросу «{{.Query}}» ничего не найдено.</p>
+				{{else}}
+					<p class="error-message">Пока ничего не принято.</p>
+				{{end}}
+			{{else}}
+				<p class="error-message files-summary">
+					Найдено файлов: {{.Total}} — {{size .Size}}
+				</p>
+				<p class="hint files-range">
+					Показано {{.First}}–{{.Last}} из {{.Total}} · страница {{.Page}} из {{.PageCount}}
 				</p>
 
 				{{range .Groups}}
@@ -145,8 +181,24 @@ var filesTemplate = template.Must(template.New("files").Funcs(pageFuncs).Parse(`
 						{{end}}
 					</ul>
 				{{end}}
-			</div>
-		{{end}}
+
+				{{if gt .PageCount 1}}
+					<nav class="pagination" aria-label="Страницы списка файлов">
+						{{if .HasPrevious}}
+							<a href="{{.PreviousURL}}" rel="prev">← Назад</a>
+						{{else}}
+							<span class="disabled">← Назад</span>
+						{{end}}
+						<span class="page-current">Страница {{.Page}} из {{.PageCount}}</span>
+						{{if .HasNext}}
+							<a href="{{.NextURL}}" rel="next">Дальше →</a>
+						{{else}}
+							<span class="disabled">Дальше →</span>
+						{{end}}
+					</nav>
+				{{end}}
+			{{end}}
+		</div>
 
 		<a href="/"><button type="button">Загрузить файлы</button></a>
 
@@ -178,7 +230,7 @@ func (h *Handler) Files(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := h.Storage.List(filesPageLimit)
+	files, err := h.Storage.List(0)
 	if err != nil {
 		log.Printf("не удалось прочитать список файлов: %v", err)
 
@@ -191,7 +243,11 @@ func (h *Handler) Files(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := groupFiles(files)
+	data := buildFilesPage(
+		files,
+		r.URL.Query().Get("q"),
+		parseFilesPage(r.URL.Query().Get("page")),
+	)
 
 	h.setPageHeaders(w)
 	w.WriteHeader(http.StatusOK)
@@ -278,13 +334,97 @@ func contentDisposition(name string) string {
 	)
 }
 
-// groupFiles раскладывает файлы по папкам-датам.
-func groupFiles(files []storage.FileInfo) filesPageData {
-	data := filesPageData{
-		Total: len(files),
-		Empty: len(files) == 0,
+func buildFilesPage(files []storage.FileInfo, query string, page int) filesPageData {
+	query = normalizeFilesQuery(query)
+	needle := strings.ToLower(query)
+	filtered := make([]storage.FileInfo, 0, len(files))
+
+	for _, file := range files {
+		if needle != "" && !strings.Contains(strings.ToLower(file.Name), needle) {
+			continue
+		}
+
+		filtered = append(filtered, file)
 	}
 
+	data := filesPageData{
+		Total: len(filtered),
+		Empty: len(filtered) == 0,
+		Query: query,
+		Page:  1,
+	}
+
+	if data.Empty {
+		return data
+	}
+
+	for _, file := range filtered {
+		data.Size += file.Size
+	}
+
+	data.PageCount = (data.Total + filesPageSize - 1) / filesPageSize
+	if page < 1 {
+		page = 1
+	}
+	if page > data.PageCount {
+		page = data.PageCount
+	}
+
+	start := (page - 1) * filesPageSize
+	end := start + filesPageSize
+	if end > data.Total {
+		end = data.Total
+	}
+
+	data.Page = page
+	data.First = start + 1
+	data.Last = end
+	data.HasPrevious = page > 1
+	data.HasNext = page < data.PageCount
+	data.Groups = groupFiles(filtered[start:end])
+
+	if data.HasPrevious {
+		data.PreviousURL = filesPageURL(page-1, query)
+	}
+	if data.HasNext {
+		data.NextURL = filesPageURL(page+1, query)
+	}
+
+	return data
+}
+
+func normalizeFilesQuery(query string) string {
+	query = strings.TrimSpace(query)
+	runes := []rune(query)
+	if len(runes) > maxFilesSearchLength {
+		query = string(runes[:maxFilesSearchLength])
+	}
+
+	return query
+}
+
+func parseFilesPage(value string) int {
+	page, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || page < 1 {
+		return 1
+	}
+
+	return page
+}
+
+func filesPageURL(page int, query string) string {
+	values := url.Values{}
+	if query != "" {
+		values.Set("q", query)
+	}
+	values.Set("page", strconv.Itoa(page))
+
+	return "/files?" + values.Encode()
+}
+
+// groupFiles раскладывает файлы по папкам-датам.
+func groupFiles(files []storage.FileInfo) []fileGroup {
+	groups := make([]fileGroup, 0)
 	index := make(map[string]int)
 
 	for _, file := range files {
@@ -292,20 +432,19 @@ func groupFiles(files []storage.FileInfo) filesPageData {
 
 		position, ok := index[date]
 		if !ok {
-			position = len(data.Groups)
+			position = len(groups)
 			index[date] = position
 
-			data.Groups = append(data.Groups, fileGroup{
+			groups = append(groups, fileGroup{
 				Date:  date,
 				Label: humanDate(date),
 			})
 		}
 
-		data.Groups[position].Files = append(data.Groups[position].Files, file)
-		data.Size += file.Size
+		groups[position].Files = append(groups[position].Files, file)
 	}
 
-	return data
+	return groups
 }
 
 // humanDate переводит "2026-10-22" в "22 октября 2026".

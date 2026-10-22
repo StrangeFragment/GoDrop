@@ -15,6 +15,7 @@ import (
 
 	"GoDrop/autostart"
 	"GoDrop/config"
+	"GoDrop/firewall"
 	"GoDrop/server"
 	"GoDrop/settings"
 	"GoDrop/singleinstance"
@@ -161,6 +162,15 @@ func main() {
 
 	log.Printf("HTTP-сервер запущен на порту: %d", running.Port)
 
+	firewallConfigBeforeSync := cfg
+	if err := syncFirewallSettings(firewallConfigBeforeSync, &cfg, running.Port); err != nil {
+		log.Printf("не удалось синхронизировать правило брандмауэра: %v", err)
+	} else if cfg.FirewallPort != firewallConfigBeforeSync.FirewallPort {
+		if err := config.Save(cfg); err != nil {
+			log.Printf("не удалось сохранить порт правила брандмауэра: %v", err)
+		}
+	}
+
 	links := buildLinks(running.Port, cfg.AccessCode)
 
 	fmt.Println("GoDrop запущен")
@@ -286,6 +296,30 @@ func applySettings(
 	cfg := nextConfig
 	cfg.Normalize()
 
+	if err := syncFirewallSettings(previous, &cfg, nextServer.Port); err != nil {
+		log.Printf("не удалось применить настройки брандмауэра: %v", err)
+		shutdownServer(nextServer)
+
+		restored, restoreErr := server.Start(previous, options)
+		if restoreErr != nil {
+			state.update(nil, previous)
+			log.Printf("не удалось вернуть прежние настройки после ошибки брандмауэра: %v", restoreErr)
+
+			return tray.Links{}, fmt.Errorf(
+				"не удалось настроить брандмауэр (%v); прежний сервер не удалось восстановить: %w",
+				err,
+				restoreErr,
+			)
+		}
+
+		state.update(restored, previous)
+
+		return tray.Links{}, fmt.Errorf(
+			"не удалось настроить брандмауэр, прежние настройки оставлены: %w",
+			err,
+		)
+	}
+
 	if err := config.Save(cfg); err != nil {
 		log.Printf("не удалось сохранить config.json: %v", err)
 	}
@@ -313,6 +347,34 @@ func applySettings(
 	)
 
 	return links, nil
+}
+
+// syncFirewallSettings связывает единственное правило GoDrop с фактическим
+// портом сервера. Запомненный порт не позволяет запрашивать UAC при каждом запуске.
+func syncFirewallSettings(previous config.Config, next *config.Config, activePort int) error {
+	if next.FirewallEnabled {
+		if activePort < 1 || activePort > 65535 {
+			return fmt.Errorf("некорректный порт сервера для брандмауэра: %d", activePort)
+		}
+
+		if !previous.FirewallEnabled || previous.FirewallPort != activePort {
+			if err := firewall.Sync(true, activePort); err != nil {
+				return err
+			}
+		}
+
+		next.FirewallPort = activePort
+		return nil
+	}
+
+	if previous.FirewallEnabled || previous.FirewallPort != 0 || next.FirewallPort != 0 {
+		if err := firewall.Sync(false, 0); err != nil {
+			return err
+		}
+	}
+
+	next.FirewallPort = 0
+	return nil
 }
 
 // buildLinks собирает адреса для телефона: с кодом доступа и без него.

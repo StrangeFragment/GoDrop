@@ -534,6 +534,16 @@ func showWindow(current config.Config) settingsResponse {
 	startCheck := widget.NewCheck("Запускать вместе с Windows", nil)
 	startCheck.SetChecked(current.StartWithWindows)
 
+	firewallCheck := widget.NewCheck("Создавать правило в брандмауэре Windows", nil)
+	firewallCheck.SetChecked(current.FirewallEnabled)
+
+	firewallHint := widget.NewLabel(
+		"Разрешаются подключения к GoDrop только из локальной сети. " +
+			"Windows может запросить подтверждение администратора.",
+	)
+	firewallHint.Wrapping = fyne.TextWrapWord
+	firewallHint.TextStyle = fyne.TextStyle{Italic: true}
+
 	var (
 		resultOnce sync.Once
 		response   = settingsResponse{
@@ -571,6 +581,7 @@ func showWindow(current config.Config) settingsResponse {
 			extensionsEntry.Text,
 			accessEntry.Text,
 			startCheck.Checked,
+			firewallCheck.Checked,
 		)
 		if err != nil {
 			dialog.ShowError(err, window)
@@ -606,6 +617,8 @@ func showWindow(current config.Config) settingsResponse {
 		widget.NewLabel("Код доступа (необязательно)"),
 		container.NewBorder(nil, nil, nil, generateButton, accessEntry),
 		startCheck,
+		firewallCheck,
+		firewallHint,
 		container.NewGridWithColumns(2, cancelButton, saveButton),
 	)
 
@@ -734,6 +747,7 @@ func readConfig(
 	extensionsText string,
 	accessCodeText string,
 	startWithWindows bool,
+	firewallEnabled bool,
 ) (config.Config, error) {
 	next := previous
 
@@ -761,6 +775,7 @@ func readConfig(
 	next.AccessCode = code
 
 	next.StartWithWindows = startWithWindows
+	next.FirewallEnabled = firewallEnabled
 
 	if err := next.Validate(); err != nil {
 		return previous, err

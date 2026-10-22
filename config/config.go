@@ -70,6 +70,13 @@ type Config struct {
 	// StartWithWindows — запускать программу вместе с Windows.
 	StartWithWindows bool `json:"start_with_windows"`
 
+	// FirewallEnabled — автоматически создавать правило для GoDrop в брандмауэре Windows.
+	FirewallEnabled bool `json:"firewall_enabled"`
+
+	// FirewallPort — фактический порт, для которого установлено правило.
+	// Нужен для обновления правила, если фактический порт сервера изменился.
+	FirewallPort int `json:"firewall_port,omitempty"`
+
 	// AllowedExtensions — расширения файлов, которые разрешено загружать.
 	AllowedExtensions []string `json:"allowed_extensions"`
 
@@ -84,6 +91,7 @@ func Default() Config {
 		StorageDir:        DefaultStorageDir(),
 		Port:              DefaultPort,
 		StartWithWindows:  false,
+		FirewallEnabled:   false,
 		AllowedExtensions: append([]string(nil), defaultExtensions...),
 	}
 }
@@ -258,6 +266,12 @@ func LoadFile(path string) (Config, error) {
 		if len(cfg.AllowedExtensions) == 0 {
 			cfg.AllowedExtensions = legacy.AllowedExtensions
 		}
+		if legacy.FirewallEnabled {
+			cfg.FirewallEnabled = true
+		}
+		if cfg.FirewallPort == 0 {
+			cfg.FirewallPort = legacy.FirewallPort
+		}
 	}
 
 	cfg.Normalize()
@@ -269,6 +283,8 @@ type legacyConfig struct {
 	StorageDir        string
 	Port              int
 	StartWithWindows  bool
+	FirewallEnabled   bool
+	FirewallPort      int
 	AllowedExtensions []string
 }
 
@@ -348,6 +364,10 @@ func (c *Config) Normalize() {
 		c.Port = defaults.Port
 	}
 
+	if c.FirewallPort < 0 || c.FirewallPort > maxPort {
+		c.FirewallPort = 0
+	}
+
 	code, err := NormalizeAccessCode(c.AccessCode)
 	if err != nil {
 		// Некорректный код не должен ломать программу:
@@ -371,6 +391,10 @@ func (c Config) Validate() error {
 
 	if c.Port < minPort || c.Port > maxPort {
 		return fmt.Errorf("порт должен быть числом от %d до %d", minPort, maxPort)
+	}
+
+	if c.FirewallPort < 0 || c.FirewallPort > maxPort {
+		return fmt.Errorf("порт правила брандмауэра должен быть числом от 0 до %d", maxPort)
 	}
 
 	if len(c.AllowedExtensions) == 0 {

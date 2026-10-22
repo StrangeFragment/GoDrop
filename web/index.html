@@ -56,13 +56,17 @@
 		}
 
 		.file-button,
-		button[type="submit"] {
+		button[type="submit"],
+		a.action-button {
 			display: block;
 			width: 100%;
 			margin-top: 16px;
 			padding: 14px;
+			font-family: inherit;
 			font-size: 17px;
+			line-height: 1.2;
 			text-align: center;
+			text-decoration: none;
 			color: #fff;
 			border: 0;
 			border-radius: 8px;
@@ -78,14 +82,12 @@
 		}
 
 		button[type="submit"],
-		button.secondary {
+		a.action-button {
 			background: #1769ff;
 		}
 
-		button.secondary {
-			margin-top: 12px;
-			padding: 12px;
-			font-size: 15px;
+		a.action-button:active {
+			background: #0d55d4;
 		}
 
 		.card {
@@ -223,7 +225,7 @@
 			<p class="hint" style="margin-bottom: 0;">Пока ничего не принято.</p>
 		{{end}}
 
-		<a href="/files"><button type="button" class="secondary">Все файлы</button></a>
+		<a href="/files" class="action-button">Все файлы</a>
 	</div>
 
 	<p class="hint" id="status"></p>
@@ -246,10 +248,10 @@
 
 		function formatSize(bytes) {
 			if (bytes < 1024) {
-				return bytes + ' Б';
+				return bytes + ' B';
 			}
 
-			const units = ['КБ', 'МБ', 'ГБ'];
+			const units = ['KB', 'MB', 'GB'];
 			let value = bytes / 1024;
 			let index = 0;
 

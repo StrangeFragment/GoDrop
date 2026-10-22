@@ -92,6 +92,103 @@ var pageStyle = template.CSS(`
 		margin-bottom: 24px;
 	}
 
+	.page-subtitle {
+		text-align: center;
+	}
+
+	.search-form {
+		margin: 0 0 16px;
+	}
+
+	.search-form label {
+		display: block;
+		margin-bottom: 8px;
+		color: #c8c8d8;
+		font-size: 14px;
+	}
+
+	.search-controls {
+		display: flex;
+		align-items: stretch;
+		gap: 8px;
+	}
+
+	.search-controls input {
+		flex: 1;
+		min-width: 0;
+		box-sizing: border-box;
+		padding: 12px;
+		border: 1px solid #37374b;
+		border-radius: 8px;
+		background: #0f0f1a;
+		color: #e8e8f0;
+		font: inherit;
+		font-size: 16px;
+	}
+
+	.search-controls input:focus {
+		outline: 2px solid #04AA6D;
+		outline-offset: 1px;
+	}
+
+	.search-controls button {
+		flex: 0 0 auto;
+		width: auto;
+		margin: 0;
+		padding: 12px 16px;
+		font-family: inherit;
+		font-size: 15px;
+	}
+
+	.clear-search {
+		display: inline-block;
+		margin-top: 10px;
+		color: #04AA6D;
+		font-size: 14px;
+	}
+
+	.files-summary {
+		margin: 16px 0 0;
+	}
+
+	p.files-range {
+		margin: 8px 0 16px;
+	}
+
+	.pagination {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		margin-top: 18px;
+	}
+
+	.pagination a,
+	.pagination span {
+		display: inline-block;
+		padding: 10px 12px;
+		border-radius: 8px;
+		background: #0f0f1a;
+		color: #e8e8f0;
+		font-size: 14px;
+		white-space: nowrap;
+	}
+
+	.pagination a:hover {
+		background: #252538;
+	}
+
+	.pagination .page-current {
+		flex: 1;
+		background: transparent;
+		color: #8888aa;
+		text-align: center;
+	}
+
+	.pagination .disabled {
+		opacity: 0.45;
+	}
+
 	main {
 		background: #0f0f1a;
 		width: 100%;
@@ -544,12 +641,12 @@ func humanSize(bytes int64) string {
 	const unit = 1024
 
 	if bytes < unit {
-		return fmt.Sprintf("%d Б", bytes)
+		return fmt.Sprintf("%d B", bytes)
 	}
 
 	value := float64(bytes)
 
-	for _, suffix := range []string{"КиБ", "МиБ", "ГиБ", "ТиБ"} {
+	for _, suffix := range []string{"KB", "MB", "GB", "TB"} {
 		value /= unit
 
 		if value < unit {
@@ -557,5 +654,5 @@ func humanSize(bytes int64) string {
 		}
 	}
 
-	return fmt.Sprintf("%.0f ПиБ", value/unit)
+	return fmt.Sprintf("%.0f PB", value/unit)
 }
