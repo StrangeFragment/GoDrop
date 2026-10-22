@@ -2,7 +2,7 @@
 *.exe
 *.syso
 *.test
-GoDrop
+/GoDrop
 
 # Артефакты Go
 /vendor/
