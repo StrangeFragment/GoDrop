@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GoDrop!</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+
+    <style>
+        body {
+            background: #0f0f1a;
+            color: #e8e8f0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+            margin: 0;
+        }
+        h1 { 
+            color: #04AA6D; 
+            margin-bottom: 8px; 
+            text-align: center;
+        }
+        p  { 
+            color: #8888aa; 
+            font-size: 14px; 
+            margin-bottom: 24px; 
+        }
+        main {
+            background: #0f0f1a;
+            max-width: 520px;
+            margin: 0 auto;
+            padding: 24px;
+            /*background: white;*/
+            border-radius: 16px;
+        }
+        form{
+            background: #0f0f1a;
+        }
+        input,
+        button {
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 16px;
+            padding: 14px;
+            font-size: 17px;
+        }
+
+        button {
+            border: 0;
+            border-radius: 8px;
+            background: #1769ff;
+            color: white;
+        }
+        #fileInput {
+            display: none;
+        }
+        .file-button {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 16px;
+            padding: 14px;
+            font-size: 17px;
+            text-align: center;
+            color: white;
+            background: #04AA6D;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .file-button:hover {
+            background: #078957;
+        }
+#fileInput {
+    display: none;
+}
+
+.file-button {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 16px;
+    padding: 14px;
+    font-size: 17px;
+    text-align: center;
+    color: white;
+    background: #04AA6D;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+
+.file-button:hover {
+    background: #078957;
+}
+
+#fileList {
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+    color: #c8c8d8;
+    font-size: 14px;
+}
+
+#fileList li {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: #191927;
+    border-radius: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+button {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 16px;
+    padding: 14px;
+    font-size: 17px;
+    border: 0;
+    border-radius: 8px;
+    background: #1769ff;
+    color: white;
+    cursor: pointer;
+}
+
+
+button:hover {
+    background: #0d55d4;
+}
+
+    </style>
+</head>
+<body>
+<main>
+    <h1 text-align="center">GoDrop!</h1>
+    <p style="text-align: center; margin-bottom: 0px;">программа для Windows, которая работает в системном трее и позволяет передавать фотографии и файлы с телефона на компьютер через локальную сеть.</p>
+
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" id="fileInput" name="files" multiple required>
+        <label for="fileInput" class="file-button">ОБЗОР</label>
+        <ul id="fileList"></ul>
+        <button type="submit">Загрузить</button>
+    </form>
+
+</main>
+<br>
+<p>Created by <strong>StrangeFragment</strong>, 2©26</p>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+
+    fileInput.addEventListener('change', function () {
+        fileList.innerHTML = '';
+
+        Array.from(fileInput.files).forEach(file => {
+            const li = document.createElement('li');
+
+            const size = (file.size / 1024 / 1024).toFixed(2);
+
+            li.textContent = `${file.name} — ${size} МБ`;
+            fileList.appendChild(li);
+        });
+    });
+</script>
+
+
+</body>
+</html>
