@@ -16,13 +16,25 @@ import (
 	"GoDrop/settings"
 )
 
+// Links — адреса, которые показывает программа.
+type Links struct {
+	// URL — адрес для телефона (с кодом доступа, если он задан).
+	URL string
+
+	// BaseURL — адрес без кода доступа.
+	BaseURL string
+
+	// Code — код доступа (пустая строка, если не задан).
+	Code string
+}
+
 // Callbacks — обработчики меню трея.
 type Callbacks struct {
-	URL        string
+	Links
 	StorageDir string
 	Config     config.Config
 
-	OnSettingsSaved func(config.Config) (string, error)
+	OnSettingsSaved func(config.Config) (Links, error)
 	OnExit          func()
 }
 
@@ -36,6 +48,30 @@ const (
 	// windowCloseTimeout — сколько ждать закрытия окон при выходе.
 	windowCloseTimeout = 3 * time.Second
 )
+
+var (
+	notifyMu sync.Mutex
+	notifyFn func(string)
+)
+
+// Notify показывает уведомление рядом со значком в трее.
+// Функция безопасна для вызова из любой горутины, в том числе
+// из HTTP-обработчика после сохранения файлов.
+func Notify(message string) {
+	notifyMu.Lock()
+	fn := notifyFn
+	notifyMu.Unlock()
+
+	if fn != nil {
+		fn(message)
+	}
+}
+
+func setNotifier(fn func(string)) {
+	notifyMu.Lock()
+	notifyFn = fn
+	notifyMu.Unlock()
+}
 
 // Run запускает значок в системном трее и блокируется до выхода.
 func Run(callbacks Callbacks) {
@@ -70,8 +106,17 @@ func Run(callbacks Callbacks) {
 	notify := func(message string) {
 		fmt.Println(message)
 		log.Println(message)
+
+		// Показ уведомления — вызов Win32/D-Bus; сериализуем его,
+		// чтобы одновременные загрузки не дёргали трей параллельно.
+		notifyMu.Lock()
+		defer notifyMu.Unlock()
+
 		tray.ShowNotification("GoDrop!", message)
 	}
+
+	setNotifier(notify)
+	defer setNotifier(nil)
 
 	// runWindow запускает окно в отдельной горутине и не даёт открыть
 	// его повторно, пока предыдущее не закрыто.
@@ -93,12 +138,24 @@ func Run(callbacks Callbacks) {
 
 	menu := systray.NewMenu()
 
-	menu.Add("GoDrop!", func() {
+	showQR := func() {
 		runWindow(windowQR, "Окно с QR-кодом уже открыто", func() {
-			if err := settings.ShowQR(currentCallbacks().URL); err != nil {
+			cb := currentCallbacks()
+
+			if err := settings.ShowQR(cb.URL, cb.Code); err != nil {
 				notify("Ошибка открытия QR-кода: " + err.Error())
 			}
 		})
+	}
+
+	menu.Add("GoDrop!", showQR)
+
+	menu.Add("Принятые файлы", func() {
+		go func() {
+			if err := openURL(currentCallbacks().BaseURL + "/files"); err != nil {
+				notify("Не удалось открыть браузер: " + err.Error())
+			}
+		}()
 	})
 
 	menu.Add("Хранилище", func() {
@@ -124,7 +181,7 @@ func Run(callbacks Callbacks) {
 				return
 			}
 
-			nextURL, err := cb.OnSettingsSaved(nextConfig)
+			links, err := cb.OnSettingsSaved(nextConfig)
 			if err != nil {
 				notify("Ошибка сохранения настроек: " + err.Error())
 				return
@@ -133,10 +190,10 @@ func Run(callbacks Callbacks) {
 			stateMu.Lock()
 			callbacks.Config = nextConfig
 			callbacks.StorageDir = nextConfig.StorageDir
-			callbacks.URL = nextURL
+			callbacks.Links = links
 			stateMu.Unlock()
 
-			if err := settings.UpdateQR(nextURL); err != nil {
+			if err := settings.UpdateQR(links.URL, links.Code); err != nil {
 				log.Printf("не удалось обновить QR-код: %v", err)
 			}
 		})
@@ -156,13 +213,7 @@ func Run(callbacks Callbacks) {
 		SetMenu(menu)
 
 	// Левый клик открывает окно с QR-кодом — так удобнее, чем лезть в меню.
-	tray.OnClick(func() {
-		runWindow(windowQR, "Окно с QR-кодом уже открыто", func() {
-			if err := settings.ShowQR(currentCallbacks().URL); err != nil {
-				notify("Ошибка открытия QR-кода: " + err.Error())
-			}
-		})
-	})
+	tray.OnClick(showQR)
 
 	tray.Show()
 
@@ -232,6 +283,18 @@ func (w *windowTracker) wait(timeout time.Duration) {
 	select {
 	case <-done:
 	case <-time.After(timeout):
+	}
+}
+
+// openURL открывает адрес в браузере по умолчанию.
+func openURL(address string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", address).Start()
+	case "darwin":
+		return exec.Command("open", address).Start()
+	default:
+		return exec.Command("xdg-open", address).Start()
 	}
 }
 

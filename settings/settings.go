@@ -10,6 +10,7 @@ import (
 	"image/draw"
 	"image/png"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,7 +54,8 @@ type settingsResponse struct {
 }
 
 type qrRequest struct {
-	URL string `json:"url"`
+	URL  string `json:"url"`
+	Code string `json:"code,omitempty"`
 }
 
 type goDropTheme struct{}
@@ -183,8 +185,10 @@ func Show(current config.Config) (config.Config, bool, error) {
 }
 
 // ShowQR открывает окно с QR-кодом. Блокируется до закрытия окна.
-func ShowQR(url string) error {
-	if err := writeJSON(qrStateFile, qrRequest{URL: url}); err != nil {
+// code — код доступа, который нужно показать рядом с QR-кодом
+// (пустая строка, если код не задан).
+func ShowQR(url, code string) error {
+	if err := writeJSON(qrStateFile, qrRequest{URL: url, Code: code}); err != nil {
 		return err
 	}
 
@@ -211,10 +215,10 @@ func ShowQR(url string) error {
 	return nil
 }
 
-// UpdateQR сообщает открытому окну с QR-кодом новый адрес.
+// UpdateQR сообщает открытому окну с QR-кодом новый адрес и код.
 // Если окно закрыто, вызов ничего не ломает.
-func UpdateQR(url string) error {
-	return writeJSON(qrStateFile, qrRequest{URL: url})
+func UpdateQR(url, code string) error {
+	return writeJSON(qrStateFile, qrRequest{URL: url, Code: code})
 }
 
 // RunFile — режим "--settings": показывает окно настроек и записывает
@@ -272,7 +276,7 @@ func RunQRFile(filename string) error {
 		return fmt.Errorf("адрес для QR-кода пуст")
 	}
 
-	showQRWindow(request.URL)
+	showQRWindow(request.URL, request.Code)
 
 	return nil
 }
@@ -308,7 +312,7 @@ func fitWindow(window fyne.Window, content fyne.CanvasObject, minSize fyne.Size)
 	window.Resize(size)
 }
 
-func showQRWindow(url string) {
+func showQRWindow(url, code string) {
 	a := app.NewWithID("GoDrop.QR")
 	a.Settings().SetTheme(goDropTheme{})
 	a.SetIcon(appIcon())
@@ -343,6 +347,28 @@ func showQRWindow(url string) {
 	addressLabel.Alignment = fyne.TextAlignCenter
 	addressLabel.SetMinSize(fyne.NewSize(420, 28))
 
+	codeLabel := canvas.NewText("", color.NRGBA{R: 232, G: 232, B: 240, A: 255})
+	codeLabel.TextSize = 20
+	codeLabel.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	codeLabel.Alignment = fyne.TextAlignCenter
+	codeLabel.SetMinSize(fyne.NewSize(420, 26))
+
+	setCode := func(nextCode string) {
+		code = nextCode
+
+		if nextCode == "" {
+			codeLabel.Text = ""
+			codeLabel.Hidden = true
+		} else {
+			codeLabel.Text = "Код доступа: " + nextCode
+			codeLabel.Hidden = false
+		}
+
+		codeLabel.Refresh()
+	}
+
+	setCode(code)
+
 	update := func(nextURL string) {
 		data, err := qrcode.Encode(nextURL, qrcode.Medium, 420)
 		if err != nil {
@@ -359,7 +385,9 @@ func showQRWindow(url string) {
 		qrImage.Resource = fyne.NewStaticResource("godrop-qr.png", data)
 		qrImage.Refresh()
 
-		addressLabel.Text = nextURL
+		// В QR-коде — полный адрес с кодом доступа, а на экране —
+		// только адрес: код показан отдельной строкой ниже.
+		addressLabel.Text = displayAddress(nextURL)
 		addressLabel.Refresh()
 	}
 
@@ -397,6 +425,7 @@ func showQRWindow(url string) {
 		subtitle,
 		container.NewCenter(qrImage),
 		container.NewCenter(addressLabel),
+		container.NewCenter(codeLabel),
 		container.NewCenter(closeButtonWithFixedWidth),
 		hint,
 	))
@@ -414,6 +443,7 @@ func showQRWindow(url string) {
 		defer ticker.Stop()
 
 		lastURL := url
+		lastCode := code
 
 		for {
 			select {
@@ -434,14 +464,17 @@ func showQRWindow(url string) {
 					continue
 				}
 
-				if request.URL == "" || request.URL == lastURL {
+				if request.URL == "" ||
+					(request.URL == lastURL && request.Code == lastCode) {
 					continue
 				}
 
 				lastURL = request.URL
+				lastCode = request.Code
 
 				fyne.Do(func() {
 					update(request.URL)
+					setCode(request.Code)
 				})
 
 			case <-done:
@@ -484,6 +517,20 @@ func showWindow(current config.Config) settingsResponse {
 	extensionsEntry.SetText(current.ExtensionsString())
 	extensionsEntry.SetPlaceHolder(".jpg, .png, .pdf")
 
+	accessEntry := widget.NewEntry()
+	accessEntry.SetText(current.AccessCode)
+	accessEntry.SetPlaceHolder("Пусто — страница открыта всем в сети")
+
+	generateButton := widget.NewButton("Создать", func() {
+		code, err := config.GenerateAccessCode(6)
+		if err != nil {
+			dialog.ShowError(err, window)
+			return
+		}
+
+		accessEntry.SetText(code)
+	})
+
 	startCheck := widget.NewCheck("Запускать вместе с Windows", nil)
 	startCheck.SetChecked(current.StartWithWindows)
 
@@ -522,6 +569,7 @@ func showWindow(current config.Config) settingsResponse {
 			storageEntry.Text,
 			portEntry.Text,
 			extensionsEntry.Text,
+			accessEntry.Text,
 			startCheck.Checked,
 		)
 		if err != nil {
@@ -555,6 +603,8 @@ func showWindow(current config.Config) settingsResponse {
 		portEntry,
 		widget.NewLabel("Разрешённые расширения"),
 		extensionsEntry,
+		widget.NewLabel("Код доступа (необязательно)"),
+		container.NewBorder(nil, nil, nil, generateButton, accessEntry),
 		startCheck,
 		container.NewGridWithColumns(2, cancelButton, saveButton),
 	)
@@ -600,6 +650,17 @@ func showWindow(current config.Config) settingsResponse {
 	a.Run()
 
 	return response
+}
+
+// displayAddress убирает из адреса служебные параметры,
+// чтобы строка помещалась в окне.
+func displayAddress(address string) string {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Host == "" {
+		return address
+	}
+
+	return parsed.Scheme + "://" + parsed.Host + parsed.Path
 }
 
 // roundQRImage скругляет внешние углы QR-изображения,
@@ -671,6 +732,7 @@ func readConfig(
 	storageText string,
 	portText string,
 	extensionsText string,
+	accessCodeText string,
 	startWithWindows bool,
 ) (config.Config, error) {
 	next := previous
@@ -691,6 +753,12 @@ func readConfig(
 		return previous, fmt.Errorf("укажите хотя бы одно разрешённое расширение")
 	}
 	next.AllowedExtensions = extensions
+
+	code, err := config.NormalizeAccessCode(accessCodeText)
+	if err != nil {
+		return previous, err
+	}
+	next.AccessCode = code
 
 	next.StartWithWindows = startWithWindows
 

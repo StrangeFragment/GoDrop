@@ -187,3 +187,72 @@ func TestParsePort(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeAccessCode(t *testing.T) {
+	t.Parallel()
+
+	valid := map[string]string{
+		"":            "",
+		"  ":          "",
+		"123456":      "123456",
+		" abcd-_12 ":  "abcd-_12",
+		"ABCDEFGHIJK": "ABCDEFGHIJK",
+	}
+
+	for input, want := range valid {
+		got, err := NormalizeAccessCode(input)
+		if err != nil {
+			t.Errorf("NormalizeAccessCode(%q) error: %v", input, err)
+			continue
+		}
+
+		if got != want {
+			t.Errorf("NormalizeAccessCode(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	invalid := []string{"123", "абвгд", "код 123", "1234567890123456789012345678901234", "12 34"}
+
+	for _, input := range invalid {
+		if _, err := NormalizeAccessCode(input); err == nil {
+			t.Errorf("NormalizeAccessCode(%q) должна возвращать ошибку", input)
+		}
+	}
+}
+
+func TestGenerateAccessCode(t *testing.T) {
+	t.Parallel()
+
+	code, err := GenerateAccessCode(6)
+	if err != nil {
+		t.Fatalf("GenerateAccessCode() error: %v", err)
+	}
+
+	if len(code) != 6 {
+		t.Fatalf("длина кода = %d, want 6", len(code))
+	}
+
+	if _, err := NormalizeAccessCode(code); err != nil {
+		t.Errorf("сгенерированный код не проходит проверку: %v", err)
+	}
+
+	second, err := GenerateAccessCode(6)
+	if err != nil {
+		t.Fatalf("GenerateAccessCode() error: %v", err)
+	}
+
+	if code == second {
+		t.Log("коды совпали — статистически маловероятно, но допустимо")
+	}
+}
+
+func TestValidateRejectsBrokenAccessCode(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	cfg.AccessCode = "код"
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("ожидалась ошибка для нелатинского кода доступа")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -146,31 +147,42 @@ func main() {
 	log.Printf("папка хранения: %s", cfg.StorageDir)
 	log.Printf("настройки загружены, порт: %d", cfg.Port)
 
-	running, err := server.Start(cfg)
+	options := server.Options{
+		OnFilesSaved: func(count int) {
+			// Уведомление рядом со значком: файлы дошли до компьютера.
+			tray.Notify(fmt.Sprintf("Принято файлов: %d", count))
+		},
+	}
+
+	running, err := server.Start(cfg, options)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	log.Printf("HTTP-сервер запущен на порту: %d", running.Port)
 
-	url := running.URL(localIPv4())
+	links := buildLinks(running.Port, cfg.AccessCode)
 
 	fmt.Println("GoDrop запущен")
-	fmt.Println("Адрес:", url)
+	fmt.Println("Адрес:", links.BaseURL)
+
+	if cfg.AccessCode != "" {
+		fmt.Println("Код доступа:", cfg.AccessCode)
+	}
 
 	state := &appState{}
 	state.update(running, cfg)
 
 	tray.Run(tray.Callbacks{
-		URL:        url,
+		Links:      links,
 		StorageDir: cfg.StorageDir,
 		Config:     cfg,
 
-		OnSettingsSaved: func(nextConfig config.Config) (string, error) {
+		OnSettingsSaved: func(nextConfig config.Config) (tray.Links, error) {
 			fmt.Println("Применение новых настроек...")
 			log.Printf("применение новых настроек")
 
-			return applySettings(state, nextConfig)
+			return applySettings(state, nextConfig, options)
 		},
 
 		OnExit: func() {
@@ -236,23 +248,27 @@ func acquireAppLock() (*singleinstance.Lock, error) {
 // applySettings останавливает сервер, применяет новые настройки и запускает
 // его заново. Если новый сервер поднять не удалось — возвращает прежние
 // настройки в работу, чтобы программа не осталась без сервера.
-func applySettings(state *appState, nextConfig config.Config) (string, error) {
+func applySettings(
+	state *appState,
+	nextConfig config.Config,
+	options server.Options,
+) (tray.Links, error) {
 	previous := state.currentConfig()
 	current := state.server()
 
 	shutdownServer(current)
 
-	nextServer, err := server.Start(nextConfig)
+	nextServer, err := server.Start(nextConfig, options)
 	if err != nil {
 		log.Printf("не удалось запустить сервер с новыми настройками: %v", err)
 
-		restored, restoreErr := server.Start(previous)
+		restored, restoreErr := server.Start(previous, options)
 		if restoreErr != nil {
 			state.update(nil, previous)
 
 			log.Printf("не удалось вернуть прежние настройки: %v", restoreErr)
 
-			return "", fmt.Errorf(
+			return tray.Links{}, fmt.Errorf(
 				"не удалось применить настройки: %v",
 				err,
 			)
@@ -260,7 +276,7 @@ func applySettings(state *appState, nextConfig config.Config) (string, error) {
 
 		state.update(restored, previous)
 
-		return "", fmt.Errorf(
+		return tray.Links{}, fmt.Errorf(
 			"не удалось применить настройки (%v). Оставлены прежние: порт %d",
 			err,
 			restored.Port,
@@ -278,20 +294,42 @@ func applySettings(state *appState, nextConfig config.Config) (string, error) {
 		log.Printf("не удалось изменить автозапуск: %v", err)
 	}
 
-	nextURL := nextServer.URL(localIPv4())
+	links := buildLinks(nextServer.Port, cfg.AccessCode)
 
 	state.update(nextServer, cfg)
 
 	fmt.Println("Настройки применены")
-	fmt.Println("Адрес:", nextURL)
+	fmt.Println("Адрес:", links.BaseURL)
+
+	if cfg.AccessCode != "" {
+		fmt.Println("Код доступа:", cfg.AccessCode)
+	}
 
 	log.Printf(
-		"настройки применены, порт: %d, папка: %s",
+		"настройки применены, порт: %d, папка: %s, код доступа: %t",
 		nextServer.Port,
 		cfg.StorageDir,
+		cfg.AccessCode != "",
 	)
 
-	return nextURL, nil
+	return links, nil
+}
+
+// buildLinks собирает адреса для телефона: с кодом доступа и без него.
+func buildLinks(port int, code string) tray.Links {
+	base := fmt.Sprintf("http://%s:%d", localIPv4(), port)
+
+	links := tray.Links{
+		BaseURL: base,
+		URL:     base,
+		Code:    code,
+	}
+
+	if code != "" {
+		links.URL = base + "/?k=" + url.QueryEscape(code)
+	}
+
+	return links
 }
 
 // shutdownServer корректно останавливает HTTP-сервер, при неудаче — принудительно закрывает.

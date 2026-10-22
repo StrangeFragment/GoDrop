@@ -42,10 +42,16 @@ func (s *Server) URL(ip string) string {
 	return fmt.Sprintf("http://%s:%d", ip, s.Port)
 }
 
+// Options — дополнительные обработчики сервера.
+type Options struct {
+	// OnFilesSaved вызывается после успешной загрузки файлов.
+	OnFilesSaved func(count int)
+}
+
 // Start поднимает HTTP-сервер. Порт берётся из настроек; если он занят,
 // подбирается свободный. Ошибка возвращается честно: если порт не удалось
 // открыть, сервер не считается запущенным.
-func Start(cfg config.Config) (*Server, error) {
+func Start(cfg config.Config, opts Options) (*Server, error) {
 	if cfg.StorageDir == "" {
 		return nil, errors.New("папка хранилища не задана")
 	}
@@ -62,11 +68,19 @@ func Start(cfg config.Config) (*Server, error) {
 		AllowedExtensions: cfg.AllowedExtensions,
 		MaxUploadBytes:    MaxUploadBytes,
 		MultipartMemory:   multipartMemory,
+		AccessCode:        cfg.AccessCode,
+		OnFilesSaved:      opts.OnFilesSaved,
+	}
+
+	if err := handler.initAccess(); err != nil {
+		return nil, err
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handler.Index)
 	mux.HandleFunc("/upload", handler.Upload)
+	mux.HandleFunc("/files", handler.Files)
+	mux.HandleFunc("/files/download", handler.Download)
 	mux.HandleFunc("/health", handler.Health)
 	mux.HandleFunc("/favicon.ico", handler.Favicon)
 	mux.HandleFunc("/icon-192.png", handler.Icon192)

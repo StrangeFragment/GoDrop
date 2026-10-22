@@ -1,9 +1,11 @@
 package config
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +36,10 @@ const (
 
 	// maxExtensionLength — разумный предел длины расширения.
 	maxExtensionLength = 20
+
+	// границы длины кода доступа
+	minAccessCodeLength = 4
+	maxAccessCodeLength = 32
 )
 
 // defaultExtensions — типы файлов, которые разрешены к загрузке "из коробки".
@@ -66,6 +72,10 @@ type Config struct {
 
 	// AllowedExtensions — расширения файлов, которые разрешено загружать.
 	AllowedExtensions []string `json:"allowed_extensions"`
+
+	// AccessCode — код доступа к странице. Пустая строка означает,
+	// что страница открыта всем в локальной сети.
+	AccessCode string `json:"access_code,omitempty"`
 }
 
 // Default возвращает настройки по умолчанию.
@@ -338,6 +348,15 @@ func (c *Config) Normalize() {
 		c.Port = defaults.Port
 	}
 
+	code, err := NormalizeAccessCode(c.AccessCode)
+	if err != nil {
+		// Некорректный код не должен ломать программу:
+		// трактуем его как "без кода".
+		code = ""
+	}
+
+	c.AccessCode = code
+
 	c.AllowedExtensions = NormalizeExtensions(c.AllowedExtensions)
 	if len(c.AllowedExtensions) == 0 {
 		c.AllowedExtensions = defaults.AllowedExtensions
@@ -358,7 +377,68 @@ func (c Config) Validate() error {
 		return errors.New("укажите хотя бы одно разрешённое расширение")
 	}
 
+	if _, err := NormalizeAccessCode(c.AccessCode); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// NormalizeAccessCode проверяет код доступа и убирает лишние пробелы.
+// Пустая строка допустима — это значит "без кода".
+func NormalizeAccessCode(value string) (string, error) {
+	code := strings.TrimSpace(value)
+
+	if code == "" {
+		return "", nil
+	}
+
+	runes := []rune(code)
+	if len(runes) < minAccessCodeLength || len(runes) > maxAccessCodeLength {
+		return "", fmt.Errorf(
+			"код доступа должен быть длиной от %d до %d символов",
+			minAccessCodeLength,
+			maxAccessCodeLength,
+		)
+	}
+
+	for _, r := range runes {
+		ok := (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' || r == '_'
+
+		if !ok {
+			return "", errors.New(
+				"код доступа может содержать только латинские буквы, цифры, \"-\" и \"_\"",
+			)
+		}
+	}
+
+	return code, nil
+}
+
+// GenerateAccessCode создаёт случайный код доступа из цифр.
+// Такой код удобно диктовать и вводить с телефона.
+func GenerateAccessCode(length int) (string, error) {
+	if length <= 0 {
+		length = 6
+	}
+
+	alphabet := "0123456789"
+
+	result := make([]byte, length)
+
+	for i := range result {
+		index, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", fmt.Errorf("не удалось создать код доступа: %w", err)
+		}
+
+		result[i] = alphabet[index.Int64()]
+	}
+
+	return string(result), nil
 }
 
 // ParsePort разбирает строку с номером порта.

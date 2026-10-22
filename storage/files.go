@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -230,4 +231,141 @@ func reserveUnique(dir, filename string) (string, error) {
 	}
 
 	return "", fmt.Errorf("не удалось подобрать свободное имя файла")
+}
+
+// FileInfo — принятый файл для страницы "Принятые файлы".
+type FileInfo struct {
+	// Name — имя файла без папки.
+	Name string
+
+	// RelPath — путь относительно папки хранилища: "2026-10-22/photo.jpg".
+	RelPath string
+
+	// Size — размер в байтах.
+	Size int64
+
+	// ModTime — время сохранения.
+	ModTime time.Time
+}
+
+// List возвращает принятые файлы, начиная с самых новых.
+// Параметр limit ограничивает количество записей (<= 0 — без ограничения).
+func (s *Storage) List(limit int) ([]FileInfo, error) {
+	if strings.TrimSpace(s.BaseDir) == "" {
+		return nil, fmt.Errorf("папка хранилища не задана")
+	}
+
+	root, err := os.ReadDir(s.BaseDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("не удалось прочитать папку хранилища: %w", err)
+	}
+
+	result := make([]FileInfo, 0, 64)
+
+	// Папки-даты идут в обратном порядке: сверху свежие.
+	// Имена в формате ГГГГ-ММ-ДД сортируются как строки.
+	dirs := make([]string, 0, len(root))
+
+	for _, entry := range root {
+		if entry.IsDir() {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+
+	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+
+	for _, dir := range dirs {
+		files, err := os.ReadDir(filepath.Join(s.BaseDir, dir))
+		if err != nil {
+			continue
+		}
+
+		names := make([]string, 0, len(files))
+
+		for _, file := range files {
+			if file.IsDir() || strings.HasSuffix(file.Name(), tempSuffix) {
+				continue
+			}
+
+			names = append(names, file.Name())
+		}
+
+		sort.Sort(sort.Reverse(sort.StringSlice(names)))
+
+		for _, name := range names {
+			info, infoErr := os.Stat(filepath.Join(s.BaseDir, dir, name))
+			if infoErr != nil || info.IsDir() {
+				continue
+			}
+
+			result = append(result, FileInfo{
+				Name:    name,
+				RelPath: dir + "/" + name,
+				Size:    info.Size(),
+				ModTime: info.ModTime(),
+			})
+
+			if limit > 0 && len(result) >= limit {
+				return result, nil
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// Resolve превращает относительный путь из запроса в полный путь к файлу.
+// Всё, что выходит за пределы папки хранилища, отклоняется.
+func (s *Storage) Resolve(relPath string) (string, error) {
+	if strings.TrimSpace(s.BaseDir) == "" {
+		return "", fmt.Errorf("папка хранилища не задана")
+	}
+
+	clean := strings.TrimSpace(relPath)
+	clean = strings.ReplaceAll(clean, `\`, "/")
+	clean = strings.TrimPrefix(clean, "/")
+
+	if clean == "" {
+		return "", fmt.Errorf("файл не указан")
+	}
+
+	if strings.Contains(clean, "\x00") {
+		return "", fmt.Errorf("некорректный путь к файлу")
+	}
+
+	root, err := filepath.Abs(s.BaseDir)
+	if err != nil {
+		return "", fmt.Errorf("не удалось определить папку хранилища: %w", err)
+	}
+
+	full := filepath.Join(root, filepath.FromSlash(clean))
+
+	resolved, err := filepath.Abs(full)
+	if err != nil {
+		return "", fmt.Errorf("некорректный путь к файлу")
+	}
+
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return "", fmt.Errorf("некорректный путь к файлу")
+	}
+
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("некорректный путь к файлу")
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("файл не найден")
+	}
+
+	if info.IsDir() {
+		return "", fmt.Errorf("это папка, а не файл")
+	}
+
+	return resolved, nil
 }

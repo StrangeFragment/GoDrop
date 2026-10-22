@@ -19,6 +19,16 @@ type Handler struct {
 	AllowedExtensions []string
 	MaxUploadBytes    int64
 	MultipartMemory   int64
+
+	// AccessCode — код доступа к странице (пустая строка — без кода).
+	AccessCode string
+
+	// OnFilesSaved вызывается после успешной загрузки файлов,
+	// чтобы показать уведомление в трее.
+	OnFilesSaved func(count int)
+
+	// salt — случайная строка процесса, из которой считается cookie.
+	salt string
 }
 
 // UploadResult — данные страницы с результатами загрузки.
@@ -44,7 +54,12 @@ type ErrorPageData struct {
 type IndexData struct {
 	Accept      string
 	MaxFileSize string
+	HasCode     bool
+	Recent      []storage.FileInfo
 }
+
+// fileListLimit — сколько последних файлов показывать на главной.
+const fileListLimit = 5
 
 var pageStyle = template.CSS(`
 	body {
@@ -199,6 +214,7 @@ var templateFuncs = template.FuncMap{
 	"style": func() template.CSS {
 		return pageStyle
 	},
+	"size": humanSize,
 }
 
 var indexTemplate = template.Must(
@@ -310,9 +326,21 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireAccess(w, r) {
+		return
+	}
+
 	data := IndexData{
 		Accept:      strings.Join(h.AllowedExtensions, ","),
 		MaxFileSize: humanSize(h.MaxUploadBytes),
+		HasCode:     h.AccessCode != "",
+	}
+
+	// Последние принятые файлы: видно, что передача дошла до компьютера.
+	if recent, err := h.Storage.List(fileListLimit); err == nil {
+		data.Recent = recent
+	} else {
+		log.Printf("не удалось прочитать список файлов: %v", err)
 	}
 
 	h.setPageHeaders(w)
@@ -346,6 +374,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			"Метод не разрешен",
 			"Загрузка файлов выполняется через POST-запрос.",
 		)
+		return
+	}
+
+	if !h.requireAccess(w, r) {
 		return
 	}
 
@@ -443,6 +475,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("сохранён файл: %s", savedName)
 		result.Uploaded = append(result.Uploaded, savedName)
+	}
+
+	if len(result.Uploaded) > 0 && h.OnFilesSaved != nil {
+		h.OnFilesSaved(len(result.Uploaded))
 	}
 
 	h.setPageHeaders(w)

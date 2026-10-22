@@ -77,8 +77,45 @@
 			background: #078957;
 		}
 
-		button[type="submit"] {
+		button[type="submit"],
+		button.secondary {
 			background: #1769ff;
+		}
+
+		button.secondary {
+			margin-top: 12px;
+			padding: 12px;
+			font-size: 15px;
+		}
+
+		.card {
+			background: #191927;
+			border-radius: 12px;
+			padding: 18px;
+			margin-top: 20px;
+		}
+
+		.card h3 {
+			margin: 0 0 4px;
+			font-size: 16px;
+		}
+
+		.card ul {
+			margin: 10px 0 0;
+			padding: 0;
+			list-style: none;
+			color: #c8c8d8;
+			font-size: 14px;
+		}
+
+		.card li {
+			padding: 8px 10px;
+			margin-bottom: 6px;
+			background: #0f0f1a;
+			border-radius: 6px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
 		}
 
 		button[type="submit"]:active {
@@ -172,6 +209,22 @@
 		<button type="submit" id="uploadButton">Загрузить</button>
 		<p class="hint">Можно выбрать несколько файлов сразу. Лимит одной отправки — {{.MaxFileSize}}.</p>
 	</form>
+
+	<div class="card">
+		<h3>Принятые файлы</h3>
+
+		{{if .Recent}}
+			<ul>
+				{{range .Recent}}
+					<li>{{.Name}} — {{size .Size}}</li>
+				{{end}}
+			</ul>
+		{{else}}
+			<p class="hint" style="margin-bottom: 0;">Пока ничего не принято.</p>
+		{{end}}
+
+		<a href="/files"><button type="button" class="secondary">Все файлы</button></a>
+	</div>
 
 	<p class="hint" id="status"></p>
 </main>

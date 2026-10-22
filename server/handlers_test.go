@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -241,5 +242,239 @@ func TestHumanSize(t *testing.T) {
 		if got := humanSize(size); got != want {
 			t.Errorf("humanSize(%d) = %q, want %q", size, got, want)
 		}
+	}
+}
+
+func newProtectedHandler(t *testing.T, code string) *Handler {
+	t.Helper()
+
+	handler := newTestHandler(t)
+	handler.AccessCode = code
+
+	if err := handler.initAccess(); err != nil {
+		t.Fatalf("initAccess() error: %v", err)
+	}
+
+	return handler
+}
+
+func TestAccessRequiredWithoutCode(t *testing.T) {
+	t.Parallel()
+
+	handler := newProtectedHandler(t, "123456")
+
+	recorder := httptest.NewRecorder()
+	handler.Index(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("код ответа = %d, want 401", recorder.Code)
+	}
+
+	if !strings.Contains(recorder.Body.String(), "Нужен код доступа") {
+		t.Error("не показана форма ввода кода")
+	}
+}
+
+func TestAccessByLinkSetsCookie(t *testing.T) {
+	t.Parallel()
+
+	handler := newProtectedHandler(t, "123456")
+
+	recorder := httptest.NewRecorder()
+	handler.Index(recorder, httptest.NewRequest(http.MethodGet, "/?k=123456", nil))
+
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("код ответа = %d, want 303", recorder.Code)
+	}
+
+	cookies := recorder.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("cookie с доступом не выставлена")
+	}
+
+	// В cookie не должно быть самого кода.
+	if strings.Contains(cookies[0].Value, "123456") {
+		t.Error("код доступа попал в cookie в открытом виде")
+	}
+
+	// Повторный запрос с cookie проходит.
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(cookies[0])
+
+	recorder = httptest.NewRecorder()
+	handler.Index(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("с cookie код ответа = %d, want 200", recorder.Code)
+	}
+}
+
+func TestAccessWrongCode(t *testing.T) {
+	t.Parallel()
+
+	handler := newProtectedHandler(t, "123456")
+
+	recorder := httptest.NewRecorder()
+	handler.Index(recorder, httptest.NewRequest(http.MethodGet, "/?k=000000", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("код ответа = %d, want 401", recorder.Code)
+	}
+
+	if !strings.Contains(recorder.Body.String(), "Код не подошёл") {
+		t.Error("не показано сообщение о неверном коде")
+	}
+}
+
+func TestAccessDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	handler := newProtectedHandler(t, "")
+
+	recorder := httptest.NewRecorder()
+	handler.Index(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("код ответа = %d, want 200", recorder.Code)
+	}
+}
+
+func TestSanitizeNext(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"":                      "/",
+		"/files":                "/files",
+		"/files?x=1":            "/files?x=1",
+		"http://evil.example/x": "/",
+		"//evil.example/x":      "/",
+		"files":                 "/",
+		"javascript:alert(1)":   "/",
+	}
+
+	for input, want := range cases {
+		if got := sanitizeNext(input); got != want {
+			t.Errorf("sanitizeNext(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestFilesPageListsUploaded(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(t)
+
+	if _, err := handler.Storage.SaveStream("report.pdf", strings.NewReader("data")); err != nil {
+		t.Fatalf("SaveStream() error: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.Files(recorder, httptest.NewRequest(http.MethodGet, "/files", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("код ответа = %d, want 200", recorder.Code)
+	}
+
+	body := recorder.Body.String()
+
+	if !strings.Contains(body, "report.pdf") {
+		t.Errorf("в списке нет файла: %s", body)
+	}
+
+	if !strings.Contains(body, "/files/download?f=") {
+		t.Error("нет ссылки на скачивание")
+	}
+}
+
+func TestDownloadFile(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(t)
+
+	if _, err := handler.Storage.SaveStream("фото 1.jpg", strings.NewReader("image-data")); err != nil {
+		t.Fatalf("SaveStream() error: %v", err)
+	}
+
+	files, err := handler.Storage.List(1)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("List() = %v, %v", files, err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/files/download?f="+url.QueryEscape(files[0].RelPath),
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+	handler.Download(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("код ответа = %d, want 200", recorder.Code)
+	}
+
+	if recorder.Body.String() != "image-data" {
+		t.Errorf("содержимое = %q, want %q", recorder.Body.String(), "image-data")
+	}
+
+	disposition := recorder.Header().Get("Content-Disposition")
+
+	if !strings.Contains(disposition, "filename*=UTF-8''") {
+		t.Errorf("Content-Disposition = %q", disposition)
+	}
+}
+
+func TestDownloadRejectsTraversal(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(t)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/files/download?f=../../secret.txt",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+	handler.Download(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("код ответа = %d, want 404", recorder.Code)
+	}
+}
+
+func TestHumanDate(t *testing.T) {
+	t.Parallel()
+
+	if got := humanDate("2026-10-22"); got != "22 октября 2026" {
+		t.Errorf("humanDate() = %q", got)
+	}
+
+	if got := humanDate("не дата"); got != "не дата" {
+		t.Errorf("humanDate() для мусора = %q", got)
+	}
+}
+
+func TestNotifyAfterUpload(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(t)
+
+	var saved int
+	handler.OnFilesSaved = func(count int) { saved = count }
+
+	body, contentType := multipartBody(t, map[string]string{
+		"photo.jpg": "image",
+		"notes.txt": "text",
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/upload", body)
+	request.Header.Set("Content-Type", contentType)
+
+	recorder := httptest.NewRecorder()
+	handler.Upload(recorder, request)
+
+	if saved != 2 {
+		t.Errorf("OnFilesSaved получил %d, want 2", saved)
 	}
 }
