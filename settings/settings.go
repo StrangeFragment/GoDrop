@@ -3,16 +3,17 @@ package settings
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
+	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,7 +27,20 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/skip2/go-qrcode"
 
+	"GoDrop/assets"
 	"GoDrop/config"
+	"GoDrop/singleinstance"
+)
+
+const (
+	// settingsLockName — блокировка окна настроек.
+	settingsLockName = "GoDrop.SettingsWindow"
+
+	// qrLockName — блокировка окна с QR-кодом.
+	qrLockName = "GoDrop.QRWindow"
+
+	// pollInterval — как часто окна проверяют обновления и команду закрытия.
+	pollInterval = 500 * time.Millisecond
 )
 
 type settingsRequest struct {
@@ -36,10 +50,12 @@ type settingsRequest struct {
 type settingsResponse struct {
 	Config config.Config `json:"config"`
 	OK     bool          `json:"ok"`
+	Error  string        `json:"error,omitempty"`
 }
 
 type qrRequest struct {
-	URL string `json:"url"`
+	URL  string `json:"url"`
+	Code string `json:"code,omitempty"`
 }
 
 type goDropTheme struct{}
@@ -75,47 +91,104 @@ func (goDropTheme) Size(name fyne.ThemeSizeName) float32 {
 	return theme.DefaultTheme().Size(name)
 }
 
-var qrStateFile = filepath.Join(os.TempDir(), "godrop-qr.json")
+var (
+	qrStateFile = filepath.Join(os.TempDir(), "godrop-qr.json")
+	stopFile    = filepath.Join(os.TempDir(), "godrop-stop")
+)
 
-func Show(current config.Config) (config.Config, bool) {
+// ClearStopSignal убирает файл-команду "закрыть все окна".
+// Вызывается при старте программы.
+func ClearStopSignal() {
+	_ = os.Remove(stopFile)
+}
+
+// StopWindows просит все открытые окна закрыться.
+// Окна — отдельные процессы, поэтому общаемся с ними через файл.
+func StopWindows() {
+	_ = os.WriteFile(stopFile, []byte("stop"), 0o600)
+}
+
+func stopRequested() bool {
+	_, err := os.Stat(stopFile)
+
+	return err == nil
+}
+
+// Show открывает окно настроек и возвращает новые настройки.
+//
+// Функция блокируется до закрытия окна, поэтому вызывать её нужно
+// из отдельной горутины.
+func Show(current config.Config) (config.Config, bool, error) {
 	filename, err := os.CreateTemp("", "godrop-settings-*.json")
 	if err != nil {
-		return current, false
+		return current, false, fmt.Errorf("не удалось создать временный файл: %w", err)
 	}
 
 	filenamePath := filename.Name()
 	_ = filename.Close()
-	defer os.Remove(filenamePath)
+
+	defer func() {
+		if err := os.Remove(filenamePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("не удалось удалить временный файл настроек: %v", err)
+		}
+	}()
 
 	if err := writeJSON(filenamePath, settingsRequest{Config: current}); err != nil {
-		return current, false
+		return current, false, err
 	}
 
 	executable, err := os.Executable()
 	if err != nil {
-		return current, false
+		return current, false, fmt.Errorf("не удалось определить путь к программе: %w", err)
 	}
 
 	command := exec.Command(executable, "--settings", filenamePath)
+	command.Stderr = os.Stderr
+
 	if err := command.Run(); err != nil {
-		return current, false
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return current, false, fmt.Errorf(
+				"окно настроек закрылось с ошибкой (код %d)",
+				exitErr.ExitCode(),
+			)
+		}
+
+		return current, false, fmt.Errorf("не удалось открыть окно настроек: %w", err)
 	}
 
 	data, err := os.ReadFile(filenamePath)
 	if err != nil {
-		return current, false
+		return current, false, fmt.Errorf("не удалось прочитать ответ окна настроек: %w", err)
 	}
 
 	var response settingsResponse
 	if err := json.Unmarshal(data, &response); err != nil {
-		return current, false
+		return current, false, fmt.Errorf("не удалось разобрать ответ окна настроек: %w", err)
 	}
 
-	return response.Config, response.OK
+	if !response.OK {
+		if response.Error != "" {
+			return current, false, errors.New(response.Error)
+		}
+
+		return current, false, nil
+	}
+
+	response.Config.Normalize()
+
+	if err := response.Config.Validate(); err != nil {
+		return current, false, err
+	}
+
+	return response.Config, true, nil
 }
 
-func ShowQR(url string) error {
-	if err := writeJSON(qrStateFile, qrRequest{URL: url}); err != nil {
+// ShowQR открывает окно с QR-кодом. Блокируется до закрытия окна.
+// code — код доступа, который нужно показать рядом с QR-кодом
+// (пустая строка, если код не задан).
+func ShowQR(url, code string) error {
+	if err := writeJSON(qrStateFile, qrRequest{URL: url, Code: code}); err != nil {
 		return err
 	}
 
@@ -124,14 +197,44 @@ func ShowQR(url string) error {
 		return err
 	}
 
-	return exec.Command(executable, "--qr", qrStateFile).Start()
+	command := exec.Command(executable, "--qr", qrStateFile)
+	command.Stderr = os.Stderr
+
+	if err := command.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf(
+				"окно с QR-кодом закрылось с ошибкой (код %d)",
+				exitErr.ExitCode(),
+			)
+		}
+
+		return err
+	}
+
+	return nil
 }
 
-func UpdateQR(url string) error {
-	return writeJSON(qrStateFile, qrRequest{URL: url})
+// UpdateQR сообщает открытому окну с QR-кодом новый адрес и код.
+// Если окно закрыто, вызов ничего не ломает.
+func UpdateQR(url, code string) error {
+	return writeJSON(qrStateFile, qrRequest{URL: url, Code: code})
 }
 
+// RunFile — режим "--settings": показывает окно настроек и записывает
+// результат обратно в файл, созданный основным процессом.
 func RunFile(filename string) error {
+	lock, ok, err := singleinstance.Acquire(settingsLockName)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		// Окно уже открыто: второй раз не показываем.
+		return nil
+	}
+	defer lock.Release()
+
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -142,10 +245,23 @@ func RunFile(filename string) error {
 		return err
 	}
 
+	request.Config.Normalize()
+
 	return writeJSON(filename, showWindow(request.Config))
 }
 
+// RunQRFile — режим "--qr": показывает окно с QR-кодом.
 func RunQRFile(filename string) error {
+	lock, ok, err := singleinstance.Acquire(qrLockName)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return nil
+	}
+	defer lock.Release()
+
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -156,22 +272,54 @@ func RunQRFile(filename string) error {
 		return err
 	}
 
-	showQRWindow(request.URL)
+	if request.URL == "" {
+		return fmt.Errorf("адрес для QR-кода пуст")
+	}
+
+	showQRWindow(request.URL, request.Code)
+
 	return nil
 }
 
 // newBorderlessWindow создаёт окно без системного заголовка и рамки.
 func newBorderlessWindow(a fyne.App) fyne.Window {
-	driver := a.Driver().(desktop.Driver)
+	driver, ok := a.Driver().(desktop.Driver)
+	if !ok {
+		return a.NewWindow("GoDrop")
+	}
+
 	return driver.CreateSplashWindow()
 }
 
-func showQRWindow(url string) {
+// appIcon возвращает значок приложения для окна и панели задач.
+func appIcon() fyne.Resource {
+	return fyne.NewStaticResource("godrop.png", assets.GoDrop256)
+}
+
+// fitWindow подгоняет размер окна под содержимое и делает его изменяемым
+// только в разумных пределах.
+func fitWindow(window fyne.Window, content fyne.CanvasObject, minSize fyne.Size) {
+	size := content.MinSize()
+
+	if size.Width < minSize.Width {
+		size.Width = minSize.Width
+	}
+
+	if size.Height < minSize.Height {
+		size.Height = minSize.Height
+	}
+
+	window.Resize(size)
+}
+
+func showQRWindow(url, code string) {
 	a := app.NewWithID("GoDrop.QR")
 	a.Settings().SetTheme(goDropTheme{})
+	a.SetIcon(appIcon())
 
 	window := newBorderlessWindow(a)
-	window.Resize(fyne.NewSize(520, 620))
+	window.SetTitle("GoDrop! — QR-код")
+	window.SetIcon(appIcon())
 
 	title := canvas.NewText(
 		"GoDrop!",
@@ -181,8 +329,11 @@ func showQRWindow(url string) {
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.Alignment = fyne.TextAlignCenter
 
-	subtitle := widget.NewLabel("Отсканируйте QR-код и перейдите по ссылке для передачи файлов")
+	subtitle := widget.NewLabel(
+		"Отсканируйте QR-код и перейдите по ссылке для передачи файлов",
+	)
 	subtitle.Alignment = fyne.TextAlignCenter
+	subtitle.Wrapping = fyne.TextWrapWord
 
 	qrImage := canvas.NewImageFromResource(nil)
 	qrImage.FillMode = canvas.ImageFillContain
@@ -196,21 +347,47 @@ func showQRWindow(url string) {
 	addressLabel.Alignment = fyne.TextAlignCenter
 	addressLabel.SetMinSize(fyne.NewSize(420, 28))
 
+	codeLabel := canvas.NewText("", color.NRGBA{R: 232, G: 232, B: 240, A: 255})
+	codeLabel.TextSize = 20
+	codeLabel.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	codeLabel.Alignment = fyne.TextAlignCenter
+	codeLabel.SetMinSize(fyne.NewSize(420, 26))
+
+	setCode := func(nextCode string) {
+		code = nextCode
+
+		if nextCode == "" {
+			codeLabel.Text = ""
+			codeLabel.Hidden = true
+		} else {
+			codeLabel.Text = "Код доступа: " + nextCode
+			codeLabel.Hidden = false
+		}
+
+		codeLabel.Refresh()
+	}
+
+	setCode(code)
+
 	update := func(nextURL string) {
 		data, err := qrcode.Encode(nextURL, qrcode.Medium, 420)
 		if err != nil {
+			log.Printf("не удалось построить QR-код: %v", err)
 			return
 		}
 
 		data, err = roundQRImage(data, 16)
 		if err != nil {
+			log.Printf("не удалось скруглить QR-код: %v", err)
 			return
 		}
 
 		qrImage.Resource = fyne.NewStaticResource("godrop-qr.png", data)
 		qrImage.Refresh()
 
-		addressLabel.Text = nextURL
+		// В QR-коде — полный адрес с кодом доступа, а на экране —
+		// только адрес: код показан отдельной строкой ниже.
+		addressLabel.Text = displayAddress(nextURL)
 		addressLabel.Refresh()
 	}
 
@@ -234,25 +411,49 @@ func showQRWindow(url string) {
 		closeButton,
 	)
 
-	window.SetContent(container.NewPadded(container.NewVBox(
+	hint := widget.NewLabel(
+		"Телефон и компьютер должны быть в одной Wi-Fi сети.\n" +
+			"Если страница не открывается — разрешите GoDrop доступ\n" +
+			"в брандмауэре Windows.",
+	)
+	hint.Alignment = fyne.TextAlignCenter
+	hint.Wrapping = fyne.TextWrapWord
+	hint.TextStyle = fyne.TextStyle{Italic: true}
+
+	content := container.NewPadded(container.NewVBox(
 		title,
 		subtitle,
 		container.NewCenter(qrImage),
-		addressLabel,
+		container.NewCenter(addressLabel),
+		container.NewCenter(codeLabel),
 		container.NewCenter(closeButtonWithFixedWidth),
-	)))
+		hint,
+	))
 
+	window.SetContent(content)
 	window.SetCloseIntercept(closeWindow)
+	window.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+		if ev.Name == fyne.KeyEscape {
+			closeWindow()
+		}
+	})
 
 	go func() {
-		ticker := time.NewTicker(500 * time.Millisecond)
+		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 
 		lastURL := url
+		lastCode := code
 
 		for {
 			select {
 			case <-ticker.C:
+				// Просьба закрыться (например, выход из программы).
+				if stopRequested() {
+					fyne.Do(closeWindow)
+					return
+				}
+
 				data, err := os.ReadFile(qrStateFile)
 				if err != nil {
 					continue
@@ -263,14 +464,17 @@ func showQRWindow(url string) {
 					continue
 				}
 
-				if request.URL == "" || request.URL == lastURL {
+				if request.URL == "" ||
+					(request.URL == lastURL && request.Code == lastCode) {
 					continue
 				}
 
 				lastURL = request.URL
+				lastCode = request.Code
 
 				fyne.Do(func() {
 					update(request.URL)
+					setCode(request.Code)
 				})
 
 			case <-done:
@@ -279,6 +483,7 @@ func showQRWindow(url string) {
 		}
 	}()
 
+	fitWindow(window, content, fyne.NewSize(520, 620))
 	window.CenterOnScreen()
 	window.Show()
 	a.Run()
@@ -287,9 +492,11 @@ func showQRWindow(url string) {
 func showWindow(current config.Config) settingsResponse {
 	a := app.NewWithID("GoDrop.Settings")
 	a.Settings().SetTheme(goDropTheme{})
+	a.SetIcon(appIcon())
 
 	window := newBorderlessWindow(a)
-	window.Resize(fyne.NewSize(560, 430))
+	window.SetTitle("GoDrop! — настройки")
+	window.SetIcon(appIcon())
 
 	title := canvas.NewText(
 		"Настройки GoDrop",
@@ -301,12 +508,28 @@ func showWindow(current config.Config) settingsResponse {
 
 	storageEntry := widget.NewEntry()
 	storageEntry.SetText(current.StorageDir)
+	storageEntry.SetPlaceHolder(`Например: C:\Users\Имя\Downloads\GoDrop`)
 
 	portEntry := widget.NewEntry()
-	portEntry.SetText(strconv.Itoa(current.Port))
+	portEntry.SetText(fmt.Sprintf("%d", current.Port))
 
 	extensionsEntry := widget.NewEntry()
-	extensionsEntry.SetText(strings.Join(current.AllowedExtensions, ", "))
+	extensionsEntry.SetText(current.ExtensionsString())
+	extensionsEntry.SetPlaceHolder(".jpg, .png, .pdf")
+
+	accessEntry := widget.NewEntry()
+	accessEntry.SetText(current.AccessCode)
+	accessEntry.SetPlaceHolder("Пусто — страница открыта всем в сети")
+
+	generateButton := widget.NewButton("Создать", func() {
+		code, err := config.GenerateAccessCode(6)
+		if err != nil {
+			dialog.ShowError(err, window)
+			return
+		}
+
+		accessEntry.SetText(code)
+	})
 
 	startCheck := widget.NewCheck("Запускать вместе с Windows", nil)
 	startCheck.SetChecked(current.StartWithWindows)
@@ -327,7 +550,7 @@ func showWindow(current config.Config) settingsResponse {
 		})
 	}
 
-	selectFolderButton := widget.NewButton("Выбрать папку", func() {
+	selectFolderButton := widget.NewButton("Выбрать", func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
 				dialog.ShowError(err, window)
@@ -346,10 +569,21 @@ func showWindow(current config.Config) settingsResponse {
 			storageEntry.Text,
 			portEntry.Text,
 			extensionsEntry.Text,
+			accessEntry.Text,
 			startCheck.Checked,
 		)
 		if err != nil {
 			dialog.ShowError(err, window)
+			return
+		}
+
+		// Папку создаём сразу, чтобы ошибка прав доступа
+		// всплыла здесь, а не при первой загрузке с телефона.
+		if err := os.MkdirAll(nextConfig.StorageDir, 0o755); err != nil {
+			dialog.ShowError(
+				fmt.Errorf("не удалось создать папку хранилища: %w", err),
+				window,
+			)
 			return
 		}
 
@@ -369,20 +603,64 @@ func showWindow(current config.Config) settingsResponse {
 		portEntry,
 		widget.NewLabel("Разрешённые расширения"),
 		extensionsEntry,
+		widget.NewLabel("Код доступа (необязательно)"),
+		container.NewBorder(nil, nil, nil, generateButton, accessEntry),
 		startCheck,
-		container.NewHBox(saveButton, cancelButton),
+		container.NewGridWithColumns(2, cancelButton, saveButton),
 	)
 
-	window.SetContent(container.NewPadded(form))
+	content := container.NewPadded(form)
+
+	window.SetContent(content)
 	window.SetCloseIntercept(func() {
 		finish(current, false)
 	})
+	window.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+		switch ev.Name {
+		case fyne.KeyEscape:
+			finish(current, false)
+		case fyne.KeyReturn, fyne.KeyEnter:
+			saveButton.OnTapped()
+		}
+	})
 
+	// Следим за командой закрытия от основного процесса.
+	stopWatcher := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if stopRequested() {
+					fyne.Do(func() { finish(current, false) })
+					return
+				}
+			case <-stopWatcher:
+				return
+			}
+		}
+	}()
+	defer close(stopWatcher)
+
+	fitWindow(window, content, fyne.NewSize(560, 430))
 	window.CenterOnScreen()
 	window.Show()
 	a.Run()
 
 	return response
+}
+
+// displayAddress убирает из адреса служебные параметры,
+// чтобы строка помещалась в окне.
+func displayAddress(address string) string {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Host == "" {
+		return address
+	}
+
+	return parsed.Scheme + "://" + parsed.Host + parsed.Path
 }
 
 // roundQRImage скругляет внешние углы QR-изображения,
@@ -446,7 +724,7 @@ func writeJSON(filename string, value any) error {
 		return err
 	}
 
-	return os.WriteFile(filename, data, 0600)
+	return os.WriteFile(filename, data, 0o600)
 }
 
 func readConfig(
@@ -454,58 +732,39 @@ func readConfig(
 	storageText string,
 	portText string,
 	extensionsText string,
+	accessCodeText string,
 	startWithWindows bool,
 ) (config.Config, error) {
-	storageDir := strings.TrimSpace(storageText)
-	if storageDir == "" {
+	next := previous
+
+	next.StorageDir = filepath.Clean(storageText)
+	if storageText == "" || next.StorageDir == "." {
 		return previous, fmt.Errorf("папка хранилища не может быть пустой")
 	}
 
-	port, err := strconv.Atoi(strings.TrimSpace(portText))
-	if err != nil || port < 1 || port > 65535 {
-		return previous, fmt.Errorf("порт должен быть числом от 1 до 65535")
+	port, err := config.ParsePort(portText)
+	if err != nil {
+		return previous, err
 	}
+	next.Port = port
 
-	extensions := parseExtensions(extensionsText)
+	extensions := config.ParseExtensions(extensionsText)
 	if len(extensions) == 0 {
 		return previous, fmt.Errorf("укажите хотя бы одно разрешённое расширение")
 	}
+	next.AllowedExtensions = extensions
 
-	return config.Config{
-		StorageDir:        filepath.Clean(storageDir),
-		Port:              port,
-		StartWithWindows:  startWithWindows,
-		AllowedExtensions: extensions,
-	}, nil
-}
+	code, err := config.NormalizeAccessCode(accessCodeText)
+	if err != nil {
+		return previous, err
+	}
+	next.AccessCode = code
 
-func parseExtensions(value string) []string {
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' ||
-			r == ';' ||
-			r == ' ' ||
-			r == '\n' ||
-			r == '\t'
-	})
+	next.StartWithWindows = startWithWindows
 
-	result := make([]string, 0, len(parts))
-	seen := make(map[string]bool)
-
-	for _, part := range parts {
-		part = strings.ToLower(strings.TrimSpace(part))
-		if part == "" {
-			continue
-		}
-
-		if !strings.HasPrefix(part, ".") {
-			part = "." + part
-		}
-
-		if !seen[part] {
-			seen[part] = true
-			result = append(result, part)
-		}
+	if err := next.Validate(); err != nil {
+		return previous, err
 	}
 
-	return result
+	return next, nil
 }
