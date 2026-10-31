@@ -112,19 +112,21 @@ index 969e80f..f37f390 100644
  	// Системные прерывания (Ctrl+C)
 diff --git a/utils/embed.go b/utils/embed.go
 new file mode 100644
-index 0000000..450bd54
+index 0000000..2319f6b
 --- /dev/null
 +++ b/utils/embed.go
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,12 @@
 +package utils
 +
 +import "embed"
 +
-+// EmbeddedFS содержит встроенные ресурсы всех модулей демонов:
-+// конфигурационные схемы (*_info.json), скрипты аналитики, HTML-шаблоны
-+// и скомпилированные бинарники демонов (*.exe).
++// EmbeddedFS содержит встроенные ресурсы модулей демонов:
++// конфигурационные схемы (*.json), шаблоны аналитики (*.html),
++// скрипты визуализации (*.js) и исходный код демонов (*.go).
++// Исполняемые файлы (*.exe) исключены из эмбеддинга, чтобы предотвратить
++// ложные срабатывания Windows Defender и блокировки компиляции.
 +//
-+//go:embed sys/* usb/* wifi/*
++//go:embed sys/* usb/* wifi/*.json wifi/*.html wifi/*.js wifi/*.go
 +var EmbeddedFS embed.FS
 diff --git a/utils/wifi/wifi_info.json b/utils/wifi/wifi_info.json
 index 6173190..cb24c9d 100644
@@ -1910,7 +1912,7 @@ index 67f355e..ddbc1c1 100644
  			val = strings.TrimSuffix(val, "%")
  			pct, _ := strconv.Atoi(val)
 diff --git a/web/handlers.go b/web/handlers.go
-index 80a5bbd..4d6d7ad 100644
+index 80a5bbd..c5d0b70 100644
 --- a/web/handlers.go
 +++ b/web/handlers.go
 @@ -5,12 +5,19 @@ import (
@@ -1933,7 +1935,7 @@ index 80a5bbd..4d6d7ad 100644
  
  	"golang.org/x/sys/windows/registry"
  )
-@@ -35,39 +42,62 @@ type UtilityInfo struct {
+@@ -35,39 +42,61 @@ type UtilityInfo struct {
  	Settings    map[string]interface{} `json:"settings"`
  }
  
@@ -1943,8 +1945,7 @@ index 80a5bbd..4d6d7ad 100644
 -	if err != nil {
 -		return nil, fmt.Errorf("ошибка чтения папки utils: %v", err)
 +// ReadUtilFile пытается прочитать файл модуля сначала с локального диска utils/ (режим разработки),
-+// а если файл на диске отсутствует — читает его из встроенной файловой системы utils.EmbeddedFS
-+// (режим автономного запуска с флешки из одного .exe файла).
++// а если файл на диске отсутствует — читает его из встроенной файловой системы utils.EmbeddedFS.
 +func ReadUtilFile(subDir string, filename string) ([]byte, error) {
 +	diskPath := filepath.Join("utils", strings.ToLower(subDir), filename)
 +	if data, err := os.ReadFile(diskPath); err == nil {
@@ -2006,12 +2007,12 @@ index 80a5bbd..4d6d7ad 100644
 -		}
 +	return list
 +}
- 
--		rawTemplate, err := os.ReadFile(infoFilePath)
++
 +func ScanUtils() ([]UtilityInfo, error) {
 +	var list []UtilityInfo
 +	subDirs := getUtilSubDirs()
-+
+ 
+-		rawTemplate, err := os.ReadFile(infoFilePath)
 +	appDataDir, _ := os.UserConfigDir()
 +
 +	for _, dirName := range subDirs {
@@ -2020,7 +2021,7 @@ index 80a5bbd..4d6d7ad 100644
  		if err != nil {
  			continue
  		}
-@@ -105,45 +135,31 @@ func ScanUtils() ([]UtilityInfo, error) {
+@@ -105,45 +134,31 @@ func ScanUtils() ([]UtilityInfo, error) {
  	return list, nil
  }
  
@@ -2077,15 +2078,17 @@ index 80a5bbd..4d6d7ad 100644
  		http.StripPrefix("/static/", fileServer).ServeHTTP(w, r)
  	})
  
-@@ -172,6 +188,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -172,6 +187,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write(jsonResponse)
  	})
  
-+	// Активация модуля
++	// Активация модуля:
++	// Получает или компилирует исполняемый файл демона, копирует в %APPDATA%\GoOverseer\<ID>,
++	// генерирует config.json, регистрирует в автозагрузке Windows и запускает фоновый процесс.
  	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -182,25 +199,33 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -182,28 +200,52 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2099,15 +2102,10 @@ index 80a5bbd..4d6d7ad 100644
  		if target == nil {
 -			http.Error(w, "Utility not found", http.StatusNotFound)
 +			http.Error(w, "Модуль не найден", http.StatusNotFound)
-+			return
-+		}
-+
-+		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
-+		if err != nil {
-+			http.Error(w, fmt.Sprintf("Бинарник %s модуля %s не найден (возможно, еще не скомпилирован): %v", target.ExeName, target.ID, err), http.StatusBadRequest)
  			return
  		}
  
++		// 1. Создаем рабочую папку модуля в %APPDATA%\GoOverseer\<ID>
  		appDataDir, _ := os.UserConfigDir()
  		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 -		_ = os.MkdirAll(liveDir, 0755)
@@ -2120,14 +2118,48 @@ index 80a5bbd..4d6d7ad 100644
  		dstExe := filepath.Join(liveDir, target.ExeName)
 -		if err := copyFile(srcExe, dstExe); err != nil {
 -			http.Error(w, "Ошибка копирования бинарника: "+err.Error(), http.StatusInternalServerError)
-+		if err := os.WriteFile(dstExe, exeBytes, 0755); err != nil {
-+			http.Error(w, "Ошибка записи бинарника в AppData: "+err.Error(), http.StatusInternalServerError)
- 			return
+-			return
++
++		// 2. Получаем исполняемый файл демона
++		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
++		if err == nil {
++			if writeErr := os.WriteFile(dstExe, exeBytes, 0755); writeErr != nil {
++				http.Error(w, "Ошибка записи бинарника в AppData: "+writeErr.Error(), http.StatusInternalServerError)
++				return
++			}
++		} else {
++			// Если скомпилированного .exe нет на диске (или он заблокирован антивирусом),
++			// автоматически собираем демон из исходников .go прямо в целевую папку AppData!
++			srcGoDisk := filepath.Join("utils", strings.ToLower(target.ID), strings.ToLower(target.ID)+"_worker.go")
++			if _, statErr := os.Stat(srcGoDisk); statErr == nil {
++				buildCmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w -H windowsgui", "-o", dstExe, srcGoDisk)
++				buildCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
++				if buildErr := buildCmd.Run(); buildErr != nil {
++					http.Error(w, fmt.Sprintf("Бинарник %s отсутствует, а сборка из %s завершилась с ошибкой: %v", target.ExeName, srcGoDisk, buildErr), http.StatusBadRequest)
++					return
++				}
++			} else {
++				http.Error(w, fmt.Sprintf("Исполняемый файл %s для модуля %s не найден", target.ExeName, target.ID), http.StatusBadRequest)
++				return
++			}
  		}
  
-@@ -218,6 +243,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
++		// 3. Создаем конфигурационный файл config.json
+ 		defaultSettings := make(map[string]string)
+ 		for _, schema := range target.UISchema {
+ 			defaultSettings[schema.Key] = schema.Default
+@@ -211,13 +253,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
+ 		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
+ 
++		// 4. Прописываем в автозагрузку Windows
+ 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+ 		if err == nil {
+ 			_ = k.SetStringValue("GoOverseer_"+target.ID, dstExe)
+ 			k.Close()
  		}
  
++		// 5. Запускаем процесс демона в скрытом режиме с рабочей директорией в AppData
  		cmd := exec.Command(dstExe)
 +		cmd.Dir = liveDir
 +		cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -2136,15 +2168,16 @@ index 80a5bbd..4d6d7ad 100644
  		if err := cmd.Start(); err != nil {
  			log.Printf("Предупреждение: не удалось запустить демон на лету: %v", err)
  		}
-@@ -226,6 +255,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -226,6 +274,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Activated successfully"))
  	})
  
-+	// Деактивация модуля
++	// Деактивация модуля:
++	// Принудительно гасит процесс, стирает ключ из реестра Windows и полностью зачищает папку в AppData.
  	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -236,18 +266,20 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -236,28 +286,47 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2162,14 +2195,19 @@ index 80a5bbd..4d6d7ad 100644
  		}
  
 -		_ = exec.Command("taskkill", "/F", "/IM", target.ExeName).Run()
++		// 1. Принудительно завершаем процесс и все его дочерние процессы без мигания консоли
 +		killCmd := exec.Command("taskkill", "/F", "/T", "/IM", target.ExeName)
 +		killCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 +		_ = killCmd.Run()
  
++		// 2. Удаляем ключ из автозагрузки Windows
  		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
  		if err == nil {
-@@ -257,7 +289,21 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 			_ = k.DeleteValue("GoOverseer_" + target.ID)
+ 			k.Close()
+ 		}
  
++		// 3. Зачищаем все файлы и папку модуля из %APPDATA%\GoOverseer\<ID>
  		appDataDir, _ := os.UserConfigDir()
  		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 -		_ = os.RemoveAll(liveDir)
@@ -2191,7 +2229,7 @@ index 80a5bbd..4d6d7ad 100644
  
  		w.WriteHeader(http.StatusOK)
  		_, _ = w.Write([]byte("Deactivated successfully"))
-@@ -287,13 +333,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -287,13 +356,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		liveConfigPath := filepath.Join(appDataDir, "GoOverseer", id, "config.json")
  
  		if _, err := os.Stat(liveConfigPath); os.IsNotExist(err) {
@@ -2207,7 +2245,7 @@ index 80a5bbd..4d6d7ad 100644
  			return
  		}
  
-@@ -311,7 +357,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -311,7 +380,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2216,7 +2254,7 @@ index 80a5bbd..4d6d7ad 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -322,10 +368,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -322,10 +391,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  
@@ -2230,7 +2268,7 @@ index 80a5bbd..4d6d7ad 100644
  			return
  		}
  
-@@ -342,13 +388,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -342,13 +411,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			"ID":          target.ID,
  			"Name":        target.Name,
  			"Description": target.Description,
@@ -2246,7 +2284,7 @@ index 80a5bbd..4d6d7ad 100644
  	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
  		w.Header().Set("Content-Type", "application/json")
  		id := r.URL.Query().Get("id")
-@@ -360,7 +407,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -360,7 +430,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2255,7 +2293,7 @@ index 80a5bbd..4d6d7ad 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -374,26 +421,112 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -374,26 +444,112 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		appDataDir, _ := os.UserConfigDir()
  		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
  
@@ -2372,7 +2410,7 @@ index 80a5bbd..4d6d7ad 100644
  	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
  		pathParts := strings.Split(r.URL.Path, "/")
  		if len(pathParts) == 0 {
-@@ -407,8 +540,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -407,8 +563,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  		folderName := strings.ToLower(nameParts[0])
@@ -2382,7 +2420,7 @@ index 80a5bbd..4d6d7ad 100644
  		if err != nil {
  			http.NotFound(w, r)
  			return
-@@ -423,5 +555,184 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -423,5 +578,183 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Stopping..."))
  		go shutdownCtxCancel()
  	})
@@ -2513,7 +2551,6 @@ index 80a5bbd..4d6d7ad 100644
 +		res.Networks = append(res.Networks, *currentNet)
 +	}
 +
-+	// Выбираем наименее загруженный канал из классической тройки 2.4 ГГц (1, 6, 11)
 +	best24 := 1
 +	minCrowd := 999
 +	for _, ch := range []int{1, 6, 11} {

@@ -43,8 +43,7 @@ type UtilityInfo struct {
 }
 
 // ReadUtilFile пытается прочитать файл модуля сначала с локального диска utils/ (режим разработки),
-// а если файл на диске отсутствует — читает его из встроенной файловой системы utils.EmbeddedFS
-// (режим автономного запуска с флешки из одного .exe файла).
+// а если файл на диске отсутствует — читает его из встроенной файловой системы utils.EmbeddedFS.
 func ReadUtilFile(subDir string, filename string) ([]byte, error) {
 	diskPath := filepath.Join("utils", strings.ToLower(subDir), filename)
 	if data, err := os.ReadFile(diskPath); err == nil {
@@ -188,7 +187,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		_, _ = w.Write(jsonResponse)
 	})
 
-	// Активация модуля
+	// Активация модуля:
+	// Получает или компилирует исполняемый файл демона, копирует в %APPDATA%\GoOverseer\<ID>,
+	// генерирует config.json, регистрирует в автозагрузке Windows и запускает фоновый процесс.
 	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -210,12 +211,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			return
 		}
 
-		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Бинарник %s модуля %s не найден (возможно, еще не скомпилирован): %v", target.ExeName, target.ID, err), http.StatusBadRequest)
-			return
-		}
-
+		// 1. Создаем рабочую папку модуля в %APPDATA%\GoOverseer\<ID>
 		appDataDir, _ := os.UserConfigDir()
 		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 		if err := os.MkdirAll(liveDir, 0755); err != nil {
@@ -224,11 +220,32 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		}
 
 		dstExe := filepath.Join(liveDir, target.ExeName)
-		if err := os.WriteFile(dstExe, exeBytes, 0755); err != nil {
-			http.Error(w, "Ошибка записи бинарника в AppData: "+err.Error(), http.StatusInternalServerError)
-			return
+
+		// 2. Получаем исполняемый файл демона
+		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
+		if err == nil {
+			if writeErr := os.WriteFile(dstExe, exeBytes, 0755); writeErr != nil {
+				http.Error(w, "Ошибка записи бинарника в AppData: "+writeErr.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// Если скомпилированного .exe нет на диске (или он заблокирован антивирусом),
+			// автоматически собираем демон из исходников .go прямо в целевую папку AppData!
+			srcGoDisk := filepath.Join("utils", strings.ToLower(target.ID), strings.ToLower(target.ID)+"_worker.go")
+			if _, statErr := os.Stat(srcGoDisk); statErr == nil {
+				buildCmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w -H windowsgui", "-o", dstExe, srcGoDisk)
+				buildCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+				if buildErr := buildCmd.Run(); buildErr != nil {
+					http.Error(w, fmt.Sprintf("Бинарник %s отсутствует, а сборка из %s завершилась с ошибкой: %v", target.ExeName, srcGoDisk, buildErr), http.StatusBadRequest)
+					return
+				}
+			} else {
+				http.Error(w, fmt.Sprintf("Исполняемый файл %s для модуля %s не найден", target.ExeName, target.ID), http.StatusBadRequest)
+				return
+			}
 		}
 
+		// 3. Создаем конфигурационный файл config.json
 		defaultSettings := make(map[string]string)
 		for _, schema := range target.UISchema {
 			defaultSettings[schema.Key] = schema.Default
@@ -236,12 +253,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
 		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
 
+		// 4. Прописываем в автозагрузку Windows
 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
 		if err == nil {
 			_ = k.SetStringValue("GoOverseer_"+target.ID, dstExe)
 			k.Close()
 		}
 
+		// 5. Запускаем процесс демона в скрытом режиме с рабочей директорией в AppData
 		cmd := exec.Command(dstExe)
 		cmd.Dir = liveDir
 		cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -255,7 +274,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		_, _ = w.Write([]byte("Activated successfully"))
 	})
 
-	// Деактивация модуля
+	// Деактивация модуля:
+	// Принудительно гасит процесс, стирает ключ из реестра Windows и полностью зачищает папку в AppData.
 	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -277,16 +297,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			return
 		}
 
+		// 1. Принудительно завершаем процесс и все его дочерние процессы без мигания консоли
 		killCmd := exec.Command("taskkill", "/F", "/T", "/IM", target.ExeName)
 		killCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		_ = killCmd.Run()
 
+		// 2. Удаляем ключ из автозагрузки Windows
 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
 		if err == nil {
 			_ = k.DeleteValue("GoOverseer_" + target.ID)
 			k.Close()
 		}
 
+		// 3. Зачищаем все файлы и папку модуля из %APPDATA%\GoOverseer\<ID>
 		appDataDir, _ := os.UserConfigDir()
 		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 
@@ -682,7 +705,6 @@ func scanSurroundingWifi() (ScanResult, error) {
 		res.Networks = append(res.Networks, *currentNet)
 	}
 
-	// Выбираем наименее загруженный канал из классической тройки 2.4 ГГц (1, 6, 11)
 	best24 := 1
 	minCrowd := 999
 	for _, ch := range []int{1, 6, 11} {
