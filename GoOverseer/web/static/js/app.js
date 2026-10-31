@@ -6,8 +6,8 @@ function showToast(message, type = 'info') {
     const container = document.getElementById('toastContainer');
     if (!container) return;
 
-    const bgClass = type === 'success' ? 'border-success text-success' :
-                    type === 'danger' ? 'border-danger text-danger' :
+    const bgClass = type === 'success' ? 'border-success text-success' : 
+                    type === 'danger' ? 'border-danger text-danger' : 
                     'border-info text-info';
 
     const toastEl = document.createElement('div');
@@ -29,7 +29,7 @@ function showToast(message, type = 'info') {
     setTimeout(() => {
         toastEl.classList.remove('show');
         setTimeout(() => toastEl.remove(), 300);
-    }, 4000);
+    }, 4500);
 }
 
 function confirmShutdown() {
@@ -72,7 +72,7 @@ function loadUtilities() {
             if (!utils || utils.length === 0) {
                 container.innerHTML = `
                     <div class="col-12 text-center py-5 glass-card">
-                        <div class="text-muted fs-5">Доступные модули в директории utils/ не обнаружены.</div>
+                        <div class="text-muted fs-5">Доступные модули не обнаружены.</div>
                     </div>`;
                 return;
             }
@@ -85,7 +85,7 @@ function loadUtilities() {
                     <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill">
                         Не активен
                     </span>`;
-
+                
                 let actionButton = `
                     <button class="btn btn-cyan btn-sm rounded-pill px-4 py-2" onclick="activateUtil('${util.id}')">
                         <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
@@ -101,7 +101,7 @@ function loadUtilities() {
                             <span class="pulse-dot"></span>
                             Активен (В автозагрузке)
                         </span>`;
-
+                    
                     let viewButton = "";
                     if (util.view_type && util.view_type !== "") {
                         viewButton = `
@@ -160,28 +160,30 @@ function loadUtilities() {
 
 function activateUtil(id) {
     fetch(`/api/utils/activate?id=${id}`, { method: 'POST' })
-        .then(res => {
+        .then(async res => {
             if (res.ok) {
                 showToast(`Модуль ${id} успешно активирован и добавлен в автозагрузку!`, 'success');
                 loadUtilities();
             } else {
-                showToast(`Ошибка активации модуля ${id}`, 'danger');
+                const errText = await res.text();
+                showToast(`Ошибка активации: ${errText || 'Неизвестная ошибка'}`, 'danger');
             }
         })
-        .catch(err => showToast(`Ошибка: ${err}`, 'danger'));
+        .catch(err => showToast(`Ошибка связи: ${err}`, 'danger'));
 }
 
 function deactivateUtil(id) {
-    if (confirm(`Деактивировать модуль ${id}, выгрузить процесс и очистить его конфигурацию?`)) {
+    if (confirm(`Деактивировать модуль ${id}, выгрузить процесс и полностью зачистить все его следы с компьютера?`)) {
         fetch(`/api/utils/deactivate?id=${id}`, { method: 'POST' })
-            .then(res => {
+            .then(async res => {
                 if (res.ok) {
-                    showToast(`Модуль ${id} деактивирован.`, 'info');
+                    showToast(`Модуль ${id} полностью деактивирован, следы зачищены.`, 'info');
                     loadUtilities();
                 } else {
-                    showToast(`Ошибка деактивации модуля ${id}`, 'danger');
+                    const errText = await res.text();
+                    showToast(`Ошибка деактивации: ${errText || 'Неизвестная ошибка'}`, 'danger');
                 }
             })
-            .catch(err => showToast(`Ошибка: ${err}`, 'danger'));
+            .catch(err => showToast(`Ошибка связи: ${err}`, 'danger'));
     }
 }

@@ -110,6 +110,22 @@ index 969e80f..f37f390 100644
  	t := tray.InitTray(serverURL, iconBytes, cancelAll)
  
  	// Системные прерывания (Ctrl+C)
+diff --git a/utils/embed.go b/utils/embed.go
+new file mode 100644
+index 0000000..450bd54
+--- /dev/null
++++ b/utils/embed.go
+@@ -0,0 +1,10 @@
++package utils
++
++import "embed"
++
++// EmbeddedFS содержит встроенные ресурсы всех модулей демонов:
++// конфигурационные схемы (*_info.json), скрипты аналитики, HTML-шаблоны
++// и скомпилированные бинарники демонов (*.exe).
++//
++//go:embed sys/* usb/* wifi/*
++var EmbeddedFS embed.FS
 diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
 index 9df0b18..84e4c50 100644
 --- a/utils/wifi/wifi_view.html
@@ -1261,26 +1277,140 @@ index 67f355e..0786126 100644
  			val = strings.TrimSuffix(val, "%")
  			pct, _ := strconv.Atoi(val)
 diff --git a/web/handlers.go b/web/handlers.go
-index 80a5bbd..df0b5f6 100644
+index 80a5bbd..7088ecd 100644
 --- a/web/handlers.go
 +++ b/web/handlers.go
-@@ -9,8 +9,10 @@ import (
+@@ -5,12 +5,18 @@ import (
+ 	"fmt"
+ 	"html/template"
+ 	"io"
++	"io/fs"
+ 	"log"
  	"net/http"
  	"os"
  	"os/exec"
 +	"path"
  	"path/filepath"
  	"strings"
++	"syscall"
 +	"time"
++
++	"GoOverseer/utils"
  
  	"golang.org/x/sys/windows/registry"
  )
-@@ -125,25 +127,29 @@ func copyFile(src, dst string) error {
+@@ -35,39 +41,62 @@ type UtilityInfo struct {
+ 	Settings    map[string]interface{} `json:"settings"`
+ }
+ 
+-func ScanUtils() ([]UtilityInfo, error) {
+-	var list []UtilityInfo
+-	subDirs, err := os.ReadDir("utils")
+-	if err != nil {
+-		return nil, fmt.Errorf("ошибка чтения папки utils: %v", err)
++// ReadUtilFile пытается прочитать файл модуля сначала с локального диска utils/ (режим разработки),
++// а если файл на диске отсутствует — читает его из встроенной файловой системы utils.EmbeddedFS
++// (режим автономного запуска с флешки из одного .exe файла).
++func ReadUtilFile(subDir string, filename string) ([]byte, error) {
++	diskPath := filepath.Join("utils", strings.ToLower(subDir), filename)
++	if data, err := os.ReadFile(diskPath); err == nil {
++		return data, nil
+ 	}
+ 
+-	appDataDir, _ := os.UserConfigDir()
+-
+-	for _, dir := range subDirs {
+-		if !dir.IsDir() {
+-			continue
+-		}
++	embedPath := path.Join(strings.ToLower(subDir), filename)
++	return utils.EmbeddedFS.ReadFile(embedPath)
++}
+ 
+-		folderPath := filepath.Join("utils", dir.Name())
+-		files, err := os.ReadDir(folderPath)
+-		if err != nil {
+-			continue
++// getUtilSubDirs находит все папки модулей (как на диске, так и во встроенном архиве)
++func getUtilSubDirs() []string {
++	seen := make(map[string]bool)
++	var list []string
++
++	// 1. Проверяем локальную директорию utils на диске
++	if diskEntries, err := os.ReadDir("utils"); err == nil {
++		for _, e := range diskEntries {
++			if e.IsDir() {
++				name := strings.ToLower(e.Name())
++				if !seen[name] {
++					seen[name] = true
++					list = append(list, name)
++				}
++			}
+ 		}
++	}
+ 
+-		var infoFilePath string
+-		for _, f := range files {
+-			if !f.IsDir() && strings.HasSuffix(f.Name(), "_info.json") {
+-				infoFilePath = filepath.Join(folderPath, f.Name())
+-				break
++	// 2. Проверяем встроенную файловую систему EmbeddedFS
++	if embedEntries, err := fs.ReadDir(utils.EmbeddedFS, "."); err == nil {
++		for _, e := range embedEntries {
++			if e.IsDir() {
++				name := strings.ToLower(e.Name())
++				if !seen[name] {
++					seen[name] = true
++					list = append(list, name)
++				}
+ 			}
+ 		}
++	}
+ 
+-		if infoFilePath == "" {
+-			continue
+-		}
++	return list
++}
+ 
+-		rawTemplate, err := os.ReadFile(infoFilePath)
++func ScanUtils() ([]UtilityInfo, error) {
++	var list []UtilityInfo
++	subDirs := getUtilSubDirs()
++
++	appDataDir, _ := os.UserConfigDir()
++
++	for _, dirName := range subDirs {
++		infoFileName := dirName + "_info.json"
++		rawTemplate, err := ReadUtilFile(dirName, infoFileName)
+ 		if err != nil {
+ 			continue
+ 		}
+@@ -105,45 +134,31 @@ func ScanUtils() ([]UtilityInfo, error) {
+ 	return list, nil
+ }
+ 
+-func copyFile(src, dst string) error {
+-	in, err := os.Open(src)
+-	if err != nil {
+-		return err
+-	}
+-	defer in.Close()
+-
+-	out, err := os.Create(dst)
+-	if err != nil {
+-		return err
+-	}
+-	defer out.Close()
+-
+-	_, err = io.Copy(out, in)
+-	return err
+-}
+-
  func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  	mux := http.NewServeMux()
  
 -	// НАДЕЖНЫЙ СТАТИК-ОБРАБОТЧИК: Исправляет MIME-типы под Windows раз и навсегда
-+	// Статический файловый сервер
  	staticFS := GetStaticFS()
  	fileServer := http.FileServer(http.FS(staticFS))
  
@@ -1313,7 +1443,17 @@ index 80a5bbd..df0b5f6 100644
  		http.StripPrefix("/static/", fileServer).ServeHTTP(w, r)
  	})
  
-@@ -182,7 +188,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -172,6 +187,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		_, _ = w.Write(jsonResponse)
+ 	})
+ 
++	// Активация модуля:
++	// Считывает .exe из встроенного EmbeddedFS (или utils/), копирует в %APPDATA%\GoOverseer\<ID>,
++	// генерирует config.json, регистрирует в автозагрузке Windows и запускает фоновый процесс.
+ 	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
+ 		id := r.URL.Query().Get("id")
+ 		if id == "" {
+@@ -182,28 +200,40 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1322,44 +1462,143 @@ index 80a5bbd..df0b5f6 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -236,7 +242,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
- 		utilsList, _ := ScanUtils()
- 		var target *UtilityInfo
- 		for i := range utilsList {
--			if utilsList[i].ID == id {
-+			if strings.EqualFold(utilsList[i].ID, id) {
- 				target = &utilsList[i]
- 				break
- 			}
-@@ -247,17 +253,26 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		}
+ 
+ 		if target == nil {
+-			http.Error(w, "Utility not found", http.StatusNotFound)
++			http.Error(w, "Модуль не найден", http.StatusNotFound)
  			return
  		}
  
-+		// Завершаем процесс демона
- 		_ = exec.Command("taskkill", "/F", "/IM", target.ExeName).Run()
++		// 1. Получаем бинарник демона (с диска или из встроенного EmbeddedFS)
++		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
++		if err != nil {
++			http.Error(w, fmt.Sprintf("Бинарник %s модуля %s не найден (возможно, еще не скомпилирован): %v", target.ExeName, target.ID, err), http.StatusBadRequest)
++			return
++		}
++
++		// 2. Создаем директорию модуля в %APPDATA%\GoOverseer\<ID>
+ 		appDataDir, _ := os.UserConfigDir()
+ 		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
+-		_ = os.MkdirAll(liveDir, 0755)
++		if err := os.MkdirAll(liveDir, 0755); err != nil {
++			http.Error(w, "Ошибка создания папки в AppData: "+err.Error(), http.StatusInternalServerError)
++			return
++		}
  
-+		// Удаляем ключ из автозагрузки Windows
+-		srcExe := filepath.Join("utils", strings.ToLower(target.ID), target.ExeName)
++		// 3. Копируем исполняемый файл демона в AppData
+ 		dstExe := filepath.Join(liveDir, target.ExeName)
+-		if err := copyFile(srcExe, dstExe); err != nil {
+-			http.Error(w, "Ошибка копирования бинарника: "+err.Error(), http.StatusInternalServerError)
++		if err := os.WriteFile(dstExe, exeBytes, 0755); err != nil {
++			http.Error(w, "Ошибка записи бинарника в AppData: "+err.Error(), http.StatusInternalServerError)
+ 			return
+ 		}
+ 
++		// 4. Создаем конфигурационный файл config.json
+ 		defaultSettings := make(map[string]string)
+ 		for _, schema := range target.UISchema {
+ 			defaultSettings[schema.Key] = schema.Default
+@@ -211,13 +241,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
+ 		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
+ 
++		// 5. Прописываем в автозагрузку Windows
+ 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+ 		if err == nil {
+ 			_ = k.SetStringValue("GoOverseer_"+target.ID, dstExe)
+ 			k.Close()
+ 		}
+ 
++		// 6. Запускаем процесс демона в скрытом режиме с рабочей директорией в AppData
+ 		cmd := exec.Command(dstExe)
++		cmd.Dir = liveDir
++		cmd.SysProcAttr = &syscall.SysProcAttr{
++			HideWindow: true,
++		}
+ 		if err := cmd.Start(); err != nil {
+ 			log.Printf("Предупреждение: не удалось запустить демон на лету: %v", err)
+ 		}
+@@ -226,6 +262,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		_, _ = w.Write([]byte("Activated successfully"))
+ 	})
+ 
++	// Деактивация модуля:
++	// Принудительно гасит процесс, стирает ключ из реестра Windows и полностью зачищает папку в AppData.
+ 	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
+ 		id := r.URL.Query().Get("id")
+ 		if id == "" {
+@@ -236,28 +274,48 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		utilsList, _ := ScanUtils()
+ 		var target *UtilityInfo
+ 		for i := range utilsList {
+-			if utilsList[i].ID == id {
++			if strings.EqualFold(utilsList[i].ID, id) {
+ 				target = &utilsList[i]
+ 				break
+ 			}
+ 		}
+ 
+ 		if target == nil {
+-			http.Error(w, "Utility not found", http.StatusNotFound)
++			http.Error(w, "Модуль не найден", http.StatusNotFound)
+ 			return
+ 		}
+ 
+-		_ = exec.Command("taskkill", "/F", "/IM", target.ExeName).Run()
++		// 1. Принудительно завершаем процесс и все его дочерние процессы без мигания консоли
++		killCmd := exec.Command("taskkill", "/F", "/T", "/IM", target.ExeName)
++		killCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
++		_ = killCmd.Run()
+ 
++		// 2. Удаляем ключ из автозагрузки Windows
  		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
  		if err == nil {
  			_ = k.DeleteValue("GoOverseer_" + target.ID)
  			k.Close()
  		}
  
-+		// Очищаем директорию с паузой для снятия файловой блокировки Windows
++		// 3. Зачищаем все файлы и папку модуля из %APPDATA%\GoOverseer\<ID>
++		// Делаем повторные попытки с интервалом, чтобы ядро Windows успело освободить дескрипторы
  		appDataDir, _ := os.UserConfigDir()
  		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 -		_ = os.RemoveAll(liveDir)
 +
-+		for attempt := 0; attempt < 3; attempt++ {
-+			time.Sleep(150 * time.Millisecond)
-+			if err := os.RemoveAll(liveDir); err == nil {
++		var removeErr error
++		for attempt := 0; attempt < 10; attempt++ {
++			removeErr = os.RemoveAll(liveDir)
++			if removeErr == nil {
 +				break
 +			}
++			time.Sleep(200 * time.Millisecond)
++		}
++
++		if removeErr != nil {
++			log.Printf("Предупреждение: не удалось полностью удалить директорию %s: %v", liveDir, removeErr)
++			http.Error(w, "Ошибка зачистки файлов: "+removeErr.Error(), http.StatusInternalServerError)
++			return
 +		}
  
  		w.WriteHeader(http.StatusOK)
  		_, _ = w.Write([]byte("Deactivated successfully"))
-@@ -311,7 +326,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -287,13 +345,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		liveConfigPath := filepath.Join(appDataDir, "GoOverseer", id, "config.json")
+ 
+ 		if _, err := os.Stat(liveConfigPath); os.IsNotExist(err) {
+-			http.Error(w, "Utility config folder does not exist or not active", http.StatusNotFound)
++			http.Error(w, "Папка модуля не найдена или модуль не активен", http.StatusNotFound)
+ 			return
+ 		}
+ 
+ 		formattedConfig, _ := json.MarshalIndent(newSettings, "", "  ")
+ 		if err := os.WriteFile(liveConfigPath, formattedConfig, 0644); err != nil {
+-			http.Error(w, "Failed to write config file: "+err.Error(), http.StatusInternalServerError)
++			http.Error(w, "Ошибка записи конфигурации: "+err.Error(), http.StatusInternalServerError)
+ 			return
+ 		}
+ 
+@@ -311,7 +369,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1368,15 +1607,37 @@ index 80a5bbd..df0b5f6 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -349,6 +364,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -322,10 +380,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 			return
+ 		}
+ 
+-		customHTMLPath := filepath.Join("utils", strings.ToLower(target.ID), strings.ToLower(target.ID)+"_view.html")
+-		customHTML, err := os.ReadFile(customHTMLPath)
++		viewHTMLName := strings.ToLower(target.ID) + "_view.html"
++		htmlBytes, err := ReadUtilFile(strings.ToLower(target.ID), viewHTMLName)
+ 		if err != nil {
+-			http.Error(w, "Файл аналитики утилиты не найден: "+err.Error(), http.StatusInternalServerError)
++			http.Error(w, "Файл аналитики модуля не найден: "+err.Error(), http.StatusInternalServerError)
+ 			return
+ 		}
+ 
+@@ -342,13 +400,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 			"ID":          target.ID,
+ 			"Name":        target.Name,
+ 			"Description": target.Description,
+-			"CustomHTML":  template.HTML(customHTML),
++			"CustomHTML":  template.HTML(string(htmlBytes)),
+ 			"CustomJS":    viewJSName,
+ 		}
+ 
  		_ = baseTmpl.Execute(w, data)
  	})
  
-+	// Считывание логов телеметрии
++	// Считывание логов телеметрии из %APPDATA%\GoOverseer\<ID>\<LogFile>
  	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
  		w.Header().Set("Content-Type", "application/json")
  		id := r.URL.Query().Get("id")
-@@ -360,7 +376,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -360,7 +419,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1385,7 +1646,7 @@ index 80a5bbd..df0b5f6 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -374,26 +390,45 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -374,26 +433,44 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		appDataDir, _ := os.UserConfigDir()
  		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
  
@@ -1397,7 +1658,7 @@ index 80a5bbd..df0b5f6 100644
  		}
 -		lines := strings.Split(string(file), "\n")
 +
-+		// Если файл очень большой, читаем только хвост (последние 256 КБ)
++		// Если лог-файл большой, читаем только хвост (последние 256 КБ)
 +		var fileBytes []byte
 +		if fileInfo.Size() > 256*1024 {
 +			f, err := os.Open(logFilePath)
@@ -1420,12 +1681,9 @@ index 80a5bbd..df0b5f6 100644
  				validJSONLines = append(validJSONLines, trimmed)
  			}
  		}
--		if len(validJSONLines) > 300 {
--			validJSONLines = validJSONLines[len(validJSONLines)-300:]
 +
-+		// Ограничиваем выдачу последними 500 записями
-+		if len(validJSONLines) > 500 {
-+			validJSONLines = validJSONLines[len(validJSONLines)-500:]
+ 		if len(validJSONLines) > 300 {
+ 			validJSONLines = validJSONLines[len(validJSONLines)-300:]
  		}
 +
  		responseJSON := "[" + strings.Join(validJSONLines, ",") + "]"
@@ -1433,11 +1691,21 @@ index 80a5bbd..df0b5f6 100644
  	})
 -	// Роут для скриптов аналитики со склада
 +
-+	// Роут для скриптов аналитики
++	// Роут для скриптов аналитики (сначала с диска, если нет - из EmbeddedFS)
  	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
  		pathParts := strings.Split(r.URL.Path, "/")
  		if len(pathParts) == 0 {
-@@ -423,5 +458,6 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -407,8 +484,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 			return
+ 		}
+ 		folderName := strings.ToLower(nameParts[0])
+-		jsPath := filepath.Join("utils", folderName, filename)
+-		data, err := os.ReadFile(jsPath)
++		data, err := ReadUtilFile(folderName, filename)
+ 		if err != nil {
+ 			http.NotFound(w, r)
+ 			return
+@@ -423,5 +499,6 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Stopping..."))
  		go shutdownCtxCancel()
  	})
@@ -1754,7 +2022,7 @@ index e69de29..4f6468a 100644
 +  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
 +}
 diff --git a/web/static/js/app.js b/web/static/js/app.js
-index 06f6584..d53597e 100644
+index 06f6584..c52e6cd 100644
 --- a/web/static/js/app.js
 +++ b/web/static/js/app.js
 @@ -1,83 +1,149 @@
@@ -1797,7 +2065,7 @@ index 06f6584..d53597e 100644
 +    setTimeout(() => {
 +        toastEl.classList.remove('show');
 +        setTimeout(() => toastEl.remove(), 300);
-+    }, 4000);
++    }, 4500);
 +}
 +
 +function confirmShutdown() {
@@ -1844,7 +2112,7 @@ index 06f6584..d53597e 100644
 +            if (!utils || utils.length === 0) {
 +                container.innerHTML = `
 +                    <div class="col-12 text-center py-5 glass-card">
-+                        <div class="text-muted fs-5">Доступные модули в директории utils/ не обнаружены.</div>
++                        <div class="text-muted fs-5">Доступные модули не обнаружены.</div>
 +                    </div>`;
                  return;
              }
@@ -1945,7 +2213,7 @@ index 06f6584..d53597e 100644
                      </div>
                  `;
  
-@@ -85,62 +151,37 @@ function loadUtilities() {
+@@ -85,62 +151,39 @@ function loadUtilities() {
              });
          })
          .catch(err => {
@@ -1961,37 +2229,41 @@ index 06f6584..d53597e 100644
 -// Функция активации модуля
  function activateUtil(id) {
      fetch(`/api/utils/activate?id=${id}`, { method: 'POST' })
-         .then(res => {
+-        .then(res => {
++        .then(async res => {
              if (res.ok) {
 -                loadUtilities(); // Перезагружаем карточки, чтобы раскрыть форму настроек
 +                showToast(`Модуль ${id} успешно активирован и добавлен в автозагрузку!`, 'success');
 +                loadUtilities();
              } else {
 -                alert("Ошибка при активации модуля");
-+                showToast(`Ошибка активации модуля ${id}`, 'danger');
++                const errText = await res.text();
++                showToast(`Ошибка активации: ${errText || 'Неизвестная ошибка'}`, 'danger');
              }
 -        });
 +        })
-+        .catch(err => showToast(`Ошибка: ${err}`, 'danger'));
++        .catch(err => showToast(`Ошибка связи: ${err}`, 'danger'));
  }
 -// Функция деактивации модуля
 +
  function deactivateUtil(id) {
 -    if (confirm("Вы уверены, что хотите полностью выключить модуль и УДАЛИТЬ все его логи с компьютера?")) {
-+    if (confirm(`Деактивировать модуль ${id}, выгрузить процесс и очистить его конфигурацию?`)) {
++    if (confirm(`Деактивировать модуль ${id}, выгрузить процесс и полностью зачистить все его следы с компьютера?`)) {
          fetch(`/api/utils/deactivate?id=${id}`, { method: 'POST' })
-             .then(res => {
+-            .then(res => {
++            .then(async res => {
                  if (res.ok) {
 -                    loadUtilities(); // Перезагружаем карточки, пряча форму настроек
-+                    showToast(`Модуль ${id} деактивирован.`, 'info');
++                    showToast(`Модуль ${id} полностью деактивирован, следы зачищены.`, 'info');
 +                    loadUtilities();
                  } else {
 -                    alert("Ошибка при деактивации модуля");
-+                    showToast(`Ошибка деактивации модуля ${id}`, 'danger');
++                    const errText = await res.text();
++                    showToast(`Ошибка деактивации: ${errText || 'Неизвестная ошибка'}`, 'danger');
                  }
 -            });
 +            })
-+            .catch(err => showToast(`Ошибка: ${err}`, 'danger'));
++            .catch(err => showToast(`Ошибка связи: ${err}`, 'danger'));
      }
  }
 -// Заглушка для сохранения настроек

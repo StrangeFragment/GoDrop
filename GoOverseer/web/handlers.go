@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +13,10 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+
+	"GoOverseer/utils"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -37,39 +41,62 @@ type UtilityInfo struct {
 	Settings    map[string]interface{} `json:"settings"`
 }
 
+// ReadUtilFile пытается прочитать файл модуля сначала с локального диска utils/ (режим разработки),
+// а если файл на диске отсутствует — читает его из встроенной файловой системы utils.EmbeddedFS
+// (режим автономного запуска с флешки из одного .exe файла).
+func ReadUtilFile(subDir string, filename string) ([]byte, error) {
+	diskPath := filepath.Join("utils", strings.ToLower(subDir), filename)
+	if data, err := os.ReadFile(diskPath); err == nil {
+		return data, nil
+	}
+
+	embedPath := path.Join(strings.ToLower(subDir), filename)
+	return utils.EmbeddedFS.ReadFile(embedPath)
+}
+
+// getUtilSubDirs находит все папки модулей (как на диске, так и во встроенном архиве)
+func getUtilSubDirs() []string {
+	seen := make(map[string]bool)
+	var list []string
+
+	// 1. Проверяем локальную директорию utils на диске
+	if diskEntries, err := os.ReadDir("utils"); err == nil {
+		for _, e := range diskEntries {
+			if e.IsDir() {
+				name := strings.ToLower(e.Name())
+				if !seen[name] {
+					seen[name] = true
+					list = append(list, name)
+				}
+			}
+		}
+	}
+
+	// 2. Проверяем встроенную файловую систему EmbeddedFS
+	if embedEntries, err := fs.ReadDir(utils.EmbeddedFS, "."); err == nil {
+		for _, e := range embedEntries {
+			if e.IsDir() {
+				name := strings.ToLower(e.Name())
+				if !seen[name] {
+					seen[name] = true
+					list = append(list, name)
+				}
+			}
+		}
+	}
+
+	return list
+}
+
 func ScanUtils() ([]UtilityInfo, error) {
 	var list []UtilityInfo
-	subDirs, err := os.ReadDir("utils")
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения папки utils: %v", err)
-	}
+	subDirs := getUtilSubDirs()
 
 	appDataDir, _ := os.UserConfigDir()
 
-	for _, dir := range subDirs {
-		if !dir.IsDir() {
-			continue
-		}
-
-		folderPath := filepath.Join("utils", dir.Name())
-		files, err := os.ReadDir(folderPath)
-		if err != nil {
-			continue
-		}
-
-		var infoFilePath string
-		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), "_info.json") {
-				infoFilePath = filepath.Join(folderPath, f.Name())
-				break
-			}
-		}
-
-		if infoFilePath == "" {
-			continue
-		}
-
-		rawTemplate, err := os.ReadFile(infoFilePath)
+	for _, dirName := range subDirs {
+		infoFileName := dirName + "_info.json"
+		rawTemplate, err := ReadUtilFile(dirName, infoFileName)
 		if err != nil {
 			continue
 		}
@@ -107,27 +134,9 @@ func ScanUtils() ([]UtilityInfo, error) {
 	return list, nil
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}
-
 func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Статический файловый сервер
 	staticFS := GetStaticFS()
 	fileServer := http.FileServer(http.FS(staticFS))
 
@@ -178,6 +187,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		_, _ = w.Write(jsonResponse)
 	})
 
+	// Активация модуля:
+	// Считывает .exe из встроенного EmbeddedFS (или utils/), копирует в %APPDATA%\GoOverseer\<ID>,
+	// генерирует config.json, регистрирует в автозагрузке Windows и запускает фоновый процесс.
 	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -195,21 +207,33 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		}
 
 		if target == nil {
-			http.Error(w, "Utility not found", http.StatusNotFound)
+			http.Error(w, "Модуль не найден", http.StatusNotFound)
 			return
 		}
 
+		// 1. Получаем бинарник демона (с диска или из встроенного EmbeddedFS)
+		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Бинарник %s модуля %s не найден (возможно, еще не скомпилирован): %v", target.ExeName, target.ID, err), http.StatusBadRequest)
+			return
+		}
+
+		// 2. Создаем директорию модуля в %APPDATA%\GoOverseer\<ID>
 		appDataDir, _ := os.UserConfigDir()
 		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
-		_ = os.MkdirAll(liveDir, 0755)
-
-		srcExe := filepath.Join("utils", strings.ToLower(target.ID), target.ExeName)
-		dstExe := filepath.Join(liveDir, target.ExeName)
-		if err := copyFile(srcExe, dstExe); err != nil {
-			http.Error(w, "Ошибка копирования бинарника: "+err.Error(), http.StatusInternalServerError)
+		if err := os.MkdirAll(liveDir, 0755); err != nil {
+			http.Error(w, "Ошибка создания папки в AppData: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		// 3. Копируем исполняемый файл демона в AppData
+		dstExe := filepath.Join(liveDir, target.ExeName)
+		if err := os.WriteFile(dstExe, exeBytes, 0755); err != nil {
+			http.Error(w, "Ошибка записи бинарника в AppData: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// 4. Создаем конфигурационный файл config.json
 		defaultSettings := make(map[string]string)
 		for _, schema := range target.UISchema {
 			defaultSettings[schema.Key] = schema.Default
@@ -217,13 +241,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
 		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
 
+		// 5. Прописываем в автозагрузку Windows
 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
 		if err == nil {
 			_ = k.SetStringValue("GoOverseer_"+target.ID, dstExe)
 			k.Close()
 		}
 
+		// 6. Запускаем процесс демона в скрытом режиме с рабочей директорией в AppData
 		cmd := exec.Command(dstExe)
+		cmd.Dir = liveDir
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow: true,
+		}
 		if err := cmd.Start(); err != nil {
 			log.Printf("Предупреждение: не удалось запустить демон на лету: %v", err)
 		}
@@ -232,6 +262,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		_, _ = w.Write([]byte("Activated successfully"))
 	})
 
+	// Деактивация модуля:
+	// Принудительно гасит процесс, стирает ключ из реестра Windows и полностью зачищает папку в AppData.
 	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -249,29 +281,40 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		}
 
 		if target == nil {
-			http.Error(w, "Utility not found", http.StatusNotFound)
+			http.Error(w, "Модуль не найден", http.StatusNotFound)
 			return
 		}
 
-		// Завершаем процесс демона
-		_ = exec.Command("taskkill", "/F", "/IM", target.ExeName).Run()
+		// 1. Принудительно завершаем процесс и все его дочерние процессы без мигания консоли
+		killCmd := exec.Command("taskkill", "/F", "/T", "/IM", target.ExeName)
+		killCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = killCmd.Run()
 
-		// Удаляем ключ из автозагрузки Windows
+		// 2. Удаляем ключ из автозагрузки Windows
 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
 		if err == nil {
 			_ = k.DeleteValue("GoOverseer_" + target.ID)
 			k.Close()
 		}
 
-		// Очищаем директорию с паузой для снятия файловой блокировки Windows
+		// 3. Зачищаем все файлы и папку модуля из %APPDATA%\GoOverseer\<ID>
+		// Делаем повторные попытки с интервалом, чтобы ядро Windows успело освободить дескрипторы
 		appDataDir, _ := os.UserConfigDir()
 		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 
-		for attempt := 0; attempt < 3; attempt++ {
-			time.Sleep(150 * time.Millisecond)
-			if err := os.RemoveAll(liveDir); err == nil {
+		var removeErr error
+		for attempt := 0; attempt < 10; attempt++ {
+			removeErr = os.RemoveAll(liveDir)
+			if removeErr == nil {
 				break
 			}
+			time.Sleep(200 * time.Millisecond)
+		}
+
+		if removeErr != nil {
+			log.Printf("Предупреждение: не удалось полностью удалить директорию %s: %v", liveDir, removeErr)
+			http.Error(w, "Ошибка зачистки файлов: "+removeErr.Error(), http.StatusInternalServerError)
+			return
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -302,13 +345,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		liveConfigPath := filepath.Join(appDataDir, "GoOverseer", id, "config.json")
 
 		if _, err := os.Stat(liveConfigPath); os.IsNotExist(err) {
-			http.Error(w, "Utility config folder does not exist or not active", http.StatusNotFound)
+			http.Error(w, "Папка модуля не найдена или модуль не активен", http.StatusNotFound)
 			return
 		}
 
 		formattedConfig, _ := json.MarshalIndent(newSettings, "", "  ")
 		if err := os.WriteFile(liveConfigPath, formattedConfig, 0644); err != nil {
-			http.Error(w, "Failed to write config file: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Ошибка записи конфигурации: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -337,10 +380,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			return
 		}
 
-		customHTMLPath := filepath.Join("utils", strings.ToLower(target.ID), strings.ToLower(target.ID)+"_view.html")
-		customHTML, err := os.ReadFile(customHTMLPath)
+		viewHTMLName := strings.ToLower(target.ID) + "_view.html"
+		htmlBytes, err := ReadUtilFile(strings.ToLower(target.ID), viewHTMLName)
 		if err != nil {
-			http.Error(w, "Файл аналитики утилиты не найден: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Файл аналитики модуля не найден: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -357,14 +400,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			"ID":          target.ID,
 			"Name":        target.Name,
 			"Description": target.Description,
-			"CustomHTML":  template.HTML(customHTML),
+			"CustomHTML":  template.HTML(string(htmlBytes)),
 			"CustomJS":    viewJSName,
 		}
 
 		_ = baseTmpl.Execute(w, data)
 	})
 
-	// Считывание логов телеметрии
+	// Считывание логов телеметрии из %APPDATA%\GoOverseer\<ID>\<LogFile>
 	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		id := r.URL.Query().Get("id")
@@ -396,7 +439,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			return
 		}
 
-		// Если файл очень большой, читаем только хвост (последние 256 КБ)
+		// Если лог-файл большой, читаем только хвост (последние 256 КБ)
 		var fileBytes []byte
 		if fileInfo.Size() > 256*1024 {
 			f, err := os.Open(logFilePath)
@@ -419,16 +462,15 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			}
 		}
 
-		// Ограничиваем выдачу последними 500 записями
-		if len(validJSONLines) > 500 {
-			validJSONLines = validJSONLines[len(validJSONLines)-500:]
+		if len(validJSONLines) > 300 {
+			validJSONLines = validJSONLines[len(validJSONLines)-300:]
 		}
 
 		responseJSON := "[" + strings.Join(validJSONLines, ",") + "]"
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	// Роут для скриптов аналитики
+	// Роут для скриптов аналитики (сначала с диска, если нет - из EmbeddedFS)
 	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
 		pathParts := strings.Split(r.URL.Path, "/")
 		if len(pathParts) == 0 {
@@ -442,8 +484,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			return
 		}
 		folderName := strings.ToLower(nameParts[0])
-		jsPath := filepath.Join("utils", folderName, filename)
-		data, err := os.ReadFile(jsPath)
+		data, err := ReadUtilFile(folderName, filename)
 		if err != nil {
 			http.NotFound(w, r)
 			return
