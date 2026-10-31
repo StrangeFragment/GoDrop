@@ -78,7 +78,7 @@ func main() {
 
 	for {
 		// 2. Читаем актуальные настройки из config.json
-		interval := 5
+		interval := 3
 		minDropDbm := 0
 		maxLogMb := 5 // дефолтное ограничение размера: 5 МБ
 
@@ -89,7 +89,7 @@ func main() {
 				if val, err := strconv.Atoi(cfg.IntervalSec); err == nil && val > 0 {
 					interval = val
 				}
-				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val > 0 {
+				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val >= 0 {
 					minDropDbm = val
 				}
 				if val, err := strconv.Atoi(cfg.MaxLogMb); err == nil && val > 0 {
@@ -106,7 +106,8 @@ func main() {
 		if minDropDbm > 0 && lastSignal != -999 {
 			diff := int(math.Abs(float64(currentData.Signal - lastSignal)))
 			stateChanged := currentData.SSID != lastSSID || currentData.State != lastState
-			heartbeatExpired := time.Since(lastRecordTime) >= 30*time.Second
+			// Heartbeat равен текущему интервалу опроса, чтобы график не замирал
+			heartbeatExpired := time.Since(lastRecordTime) >= time.Duration(interval)*time.Second
 
 			if diff < minDropDbm && !stateChanged && !heartbeatExpired {
 				shouldWrite = false

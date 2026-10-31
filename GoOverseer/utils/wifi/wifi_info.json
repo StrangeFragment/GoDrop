@@ -11,13 +11,13 @@
       "key": "interval_sec",
       "label": "Интервал опроса адаптера (сек)",
       "type": "number",
-      "default": "5"
+      "default": "3"
     },
     {
       "key": "min_signal_drop_dbm",
       "label": "Порог фиксации изменения сигнала (dBm)",
       "type": "number",
-      "default": "5"
+      "default": "0"
     },
     {
       "key": "max_log_mb",

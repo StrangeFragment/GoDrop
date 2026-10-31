@@ -71,7 +71,27 @@ function changePollInterval(secondsStr) {
     const pollLabel = document.getElementById('chart-poll-label');
     if (pollLabel) pollLabel.innerText = `каждые ${sec} сек`;
 
+    // Синхронизируем интервал опроса с фоновым демоном через config.json
+    const id = new URLSearchParams(window.location.search).get('id') || "WIFI";
+    const minDrop = document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "0";
+    const maxMb = document.getElementById("cfg_live_max_log_mb") ? document.getElementById("cfg_live_max_log_mb").value : "5";
+
+    const cfgInput = document.getElementById("cfg_live_interval_sec");
+    if (cfgInput) cfgInput.value = sec;
+
+    fetch(`/api/utils/save?id=${encodeURIComponent(id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            interval_sec: String(sec),
+            min_signal_drop_dbm: String(minDrop),
+            max_log_mb: String(maxMb)
+        })
+    }).catch(e => console.warn('Не удалось обновить конфиг демона:', e));
+
     startPollingTimer();
+    refreshWifiAnalytics(true);
+
     if (typeof showToast === 'function') {
         showToast(`Частота опроса телеметрии установлена: каждые ${sec} сек`, 'info');
     }
@@ -202,7 +222,7 @@ function refreshWifiAnalytics(forceRender = false) {
             <div class="col-md-4">
                 <label class="form-label text-light small fw-bold">Порог фиксации сигнала (dBm)</label>
                 <div class="input-group input-group-sm">
-                    <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
+                    <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="0">
                     <span class="input-group-text bg-dark text-muted border-secondary">dBm</span>
                 </div>
                 <div class="form-text text-muted small">Минимальное колебание для внеочередной записи.</div>

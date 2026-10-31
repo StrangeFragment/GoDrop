@@ -127,10 +127,10 @@ index 0000000..f68bc28
 +//go:embed sys/* usb/* wifi/*
 +var EmbeddedFS embed.FS
 diff --git a/utils/wifi/wifi_info.json b/utils/wifi/wifi_info.json
-index 6173190..a2e108d 100644
+index 6173190..a6f091b 100644
 --- a/utils/wifi/wifi_info.json
 +++ b/utils/wifi/wifi_info.json
-@@ -2,10 +2,10 @@
+@@ -2,21 +2,27 @@
    "id": "WIFI",
    "name": "Мониторинг Wi-Fi",
    "description": "Следит за качеством сигнала, SSID, скоростью линка и используемым каналом.",
@@ -143,19 +143,24 @@ index 6173190..a2e108d 100644
    "ui_schema": [
      {
        "key": "interval_sec",
-@@ -18,6 +18,12 @@
+       "label": "Интервал опроса адаптера (сек)",
+       "type": "number",
+-      "default": "5"
++      "default": "3"
+     },
+     {
+       "key": "min_signal_drop_dbm",
        "label": "Порог фиксации изменения сигнала (dBm)",
        "type": "number",
-       "default": "5"
++      "default": "0"
 +    },
 +    {
 +      "key": "max_log_mb",
 +      "label": "Максимальный размер лога (МБ)",
 +      "type": "number",
-+      "default": "5"
+       "default": "5"
      }
    ]
- }
 diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
 index 9df0b18..247a6b6 100644
 --- a/utils/wifi/wifi_view.html
@@ -662,10 +667,10 @@ index 9df0b18..247a6b6 100644
    </div>
  </div>
 diff --git a/utils/wifi/wifi_view.js b/utils/wifi/wifi_view.js
-index 9094a27..90b2f1b 100644
+index 9094a27..d98f55e 100644
 --- a/utils/wifi/wifi_view.js
 +++ b/utils/wifi/wifi_view.js
-@@ -1,194 +1,959 @@
+@@ -1,194 +1,979 @@
 +// ==========================================================================
 +// GoOverseer Wi-Fi Telemetry, Analytics, Scanner & AP Security Logic
 +// ==========================================================================
@@ -743,7 +748,27 @@ index 9094a27..90b2f1b 100644
 +    const pollLabel = document.getElementById('chart-poll-label');
 +    if (pollLabel) pollLabel.innerText = `каждые ${sec} сек`;
 +
++    // Синхронизируем интервал опроса с фоновым демоном через config.json
++    const id = new URLSearchParams(window.location.search).get('id') || "WIFI";
++    const minDrop = document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "0";
++    const maxMb = document.getElementById("cfg_live_max_log_mb") ? document.getElementById("cfg_live_max_log_mb").value : "5";
++
++    const cfgInput = document.getElementById("cfg_live_interval_sec");
++    if (cfgInput) cfgInput.value = sec;
++
++    fetch(`/api/utils/save?id=${encodeURIComponent(id)}`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({
++            interval_sec: String(sec),
++            min_signal_drop_dbm: String(minDrop),
++            max_log_mb: String(maxMb)
++        })
++    }).catch(e => console.warn('Не удалось обновить конфиг демона:', e));
++
 +    startPollingTimer();
++    refreshWifiAnalytics(true);
++
 +    if (typeof showToast === 'function') {
 +        showToast(`Частота опроса телеметрии установлена: каждые ${sec} сек`, 'info');
 +    }
@@ -892,7 +917,7 @@ index 9094a27..90b2f1b 100644
 +            <div class="col-md-4">
 +                <label class="form-label text-light small fw-bold">Порог фиксации сигнала (dBm)</label>
 +                <div class="input-group input-group-sm">
-+                    <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
++                    <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="0">
 +                    <span class="input-group-text bg-dark text-muted border-secondary">dBm</span>
 +                </div>
 +                <div class="form-text text-muted small">Минимальное колебание для внеочередной записи.</div>
@@ -995,11 +1020,7 @@ index 9094a27..90b2f1b 100644
 +        const elQuality = document.getElementById("card-signal-quality");
 +        const elBadge = document.getElementById("badge-connection-state");
 +        const visualBars = document.getElementById("wifi-visual-bars");
- 
--        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
--        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
--        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
--        
++
 +        const isDisconnected = !latest.ssid || latest.ssid === "Disconnected" || latest.state === "отключено";
 +
 +        if (elSsid) elSsid.innerText = isDisconnected ? "Отключено" : latest.ssid;
@@ -1028,7 +1049,11 @@ index 9094a27..90b2f1b 100644
 +            const tx = latest.tx_rate || 0;
 +            elSpeeds.innerText = `Линк: ⬇ ${rx} Мб / ⬆ ${tx} Мб`;
 +        }
-+
+ 
+-        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
+-        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
+-        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
+-        
 +        const sig = latest.signal ?? -100;
          if (elSignal) {
 -            elSignal.innerText = `${latestEntry.signal ?? -100} dBm`;
@@ -1122,29 +1147,21 @@ index 9094a27..90b2f1b 100644
 +        if (elStatMax) elStatMax.innerText = `${maxSig} dBm`;
 +        if (elStatMin) elStatMin.innerText = `${minSig} dBm`;
 +        if (elStatAvg) elStatAvg.innerText = `${avgSig} dBm`;
++    }
++
++    // 3. ОБНОВЛЕНИЕ ТАБЛИЦЫ ИСТОРИИ
++    if (!tableBody) return;
++
++    if (!data || data.length === 0) {
++        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">История подключений пока пуста...</td></tr>`;
++        return;
      }
  
 -    tableBody.innerHTML = "";
-+    // 3. ОБНОВЛЕНИЕ ТАБЛИЦЫ ИСТОРИИ
-+    if (!tableBody) return;
++    let filteredData = data;
  
 -    if (data.length === 0) {
 -        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">Логи пока пусты...</td></tr>`;
-+    if (!data || data.length === 0) {
-+        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">История подключений пока пуста...</td></tr>`;
-         return;
-     }
- 
--    // А. ОБНОВЛЯЕМ ГРАФИК CHART.JS
--    wifiChartInstance.data.labels = [];
--    wifiChartInstance.data.datasets[0].data = [];
-+    let filteredData = data;
- 
--    const chartPoints = data.slice(-40);
--    chartPoints.forEach(entry => {
--        let labelTime = "—";
--        if (entry.time) {
--            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
 +    if (currentLogFilter === 'connected') {
 +        filteredData = filteredData.filter(d => d.ssid && d.ssid !== "Disconnected" && d.state !== "отключено");
 +    } else if (currentLogFilter === 'disconnected') {
@@ -1166,9 +1183,12 @@ index 9094a27..90b2f1b 100644
 +
 +    if (filteredData.length === 0) {
 +        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">События по заданному фильтру не найдены.</td></tr>`;
-+        return;
-+    }
-+
+         return;
+     }
+ 
+-    // А. ОБНОВЛЯЕМ ГРАФИК CHART.JS
+-    wifiChartInstance.data.labels = [];
+-    wifiChartInstance.data.datasets[0].data = [];
 +    const displayRows = filteredData.slice(-60).reverse();
 +    const htmlChunks = [];
 +
@@ -1178,7 +1198,12 @@ index 9094a27..90b2f1b 100644
 +
 +        let statusBadge = `<span class="badge badge-custom badge-connected">Подключено</span>`;
 +        let signalClass = "text-success";
-+
+ 
+-    const chartPoints = data.slice(-40);
+-    chartPoints.forEach(entry => {
+-        let labelTime = "—";
+-        if (entry.time) {
+-            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
 +        if (isDisc) {
 +            statusBadge = `<span class="badge badge-custom badge-disconnected">Отключено</span>`;
 +            signalClass = "text-danger";
@@ -1607,8 +1632,9 @@ index 9094a27..90b2f1b 100644
 +    if (btnIcon) {
 +        btnIcon.innerText = isPaused ? "▶ Возобновить" : "⏸ Пауза";
 +    }
-+}
-+
+ }
+ 
+-// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
 +// Фильтры и поиск по истории
 +function setLogFilter(filter) {
 +    currentLogFilter = filter;
@@ -1660,9 +1686,8 @@ index 9094a27..90b2f1b 100644
 +    link.click();
 +    document.body.removeChild(link);
 +    setTimeout(() => URL.revokeObjectURL(url), 1000);
- }
- 
--// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
++}
++
 +// Экспорт истории в JSON
 +function exportLogsToJSON() {
 +    if (!cachedLogData || cachedLogData.length === 0) {
@@ -1728,7 +1753,7 @@ index 9094a27..90b2f1b 100644
 -}
 -}
 diff --git a/utils/wifi/wifi_worker.go b/utils/wifi/wifi_worker.go
-index 67f355e..ddbc1c1 100644
+index 67f355e..fbaaf8a 100644
 --- a/utils/wifi/wifi_worker.go
 +++ b/utils/wifi/wifi_worker.go
 @@ -4,6 +4,7 @@ import (
@@ -1808,18 +1833,18 @@ index 67f355e..ddbc1c1 100644
 -		// 2. Читаем актуальные настройки из config.json на каждом шаге цикла
 -		interval := 5 // дефолтное значение
 +		// 2. Читаем актуальные настройки из config.json
-+		interval := 5
++		interval := 3
 +		minDropDbm := 0
 +		maxLogMb := 5 // дефолтное ограничение размера: 5 МБ
 +
  		cfgData, err := os.ReadFile(configPath)
  		if err == nil {
  			var cfg Config
-@@ -64,28 +89,67 @@ func main() {
+@@ -64,28 +89,68 @@ func main() {
  				if val, err := strconv.Atoi(cfg.IntervalSec); err == nil && val > 0 {
  					interval = val
  				}
-+				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val > 0 {
++				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val >= 0 {
 +					minDropDbm = val
 +				}
 +				if val, err := strconv.Atoi(cfg.MaxLogMb); err == nil && val > 0 {
@@ -1841,7 +1866,8 @@ index 67f355e..ddbc1c1 100644
 +		if minDropDbm > 0 && lastSignal != -999 {
 +			diff := int(math.Abs(float64(currentData.Signal - lastSignal)))
 +			stateChanged := currentData.SSID != lastSSID || currentData.State != lastState
-+			heartbeatExpired := time.Since(lastRecordTime) >= 30*time.Second
++			// Heartbeat равен текущему интервалу опроса, чтобы график не замирал
++			heartbeatExpired := time.Since(lastRecordTime) >= time.Duration(interval)*time.Second
 +
 +			if diff < minDropDbm && !stateChanged && !heartbeatExpired {
 +				shouldWrite = false
@@ -1892,7 +1918,7 @@ index 67f355e..ddbc1c1 100644
  func parseWindowsWifi() WifiData {
  	res := WifiData{
  		Time:      time.Now().Format("2006-01-02 15:04:05"),
-@@ -101,8 +165,6 @@ func parseWindowsWifi() WifiData {
+@@ -101,8 +166,6 @@ func parseWindowsWifi() WifiData {
  	}
  
  	cmd := exec.Command("netsh", "wlan", "show", "interfaces")
@@ -1901,7 +1927,7 @@ index 67f355e..ddbc1c1 100644
  	cmd.SysProcAttr = &syscall.SysProcAttr{
  		HideWindow: true,
  	}
-@@ -112,9 +174,17 @@ func parseWindowsWifi() WifiData {
+@@ -112,9 +175,17 @@ func parseWindowsWifi() WifiData {
  		return res
  	}
  
@@ -1921,7 +1947,7 @@ index 67f355e..ddbc1c1 100644
  
  	for _, line := range lines {
  		line = strings.TrimSpace(line)
-@@ -139,12 +209,10 @@ func parseWindowsWifi() WifiData {
+@@ -139,12 +210,10 @@ func parseWindowsWifi() WifiData {
  		case key == "Канал" || key == "Channel":
  			ch, _ := strconv.Atoi(val)
  			res.Channel = int32(ch)
