@@ -155,7 +155,7 @@ index 6173190..cb24c9d 100644
    ]
  }
 diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
-index 9df0b18..7418768 100644
+index 9df0b18..247a6b6 100644
 --- a/utils/wifi/wifi_view.html
 +++ b/utils/wifi/wifi_view.html
 @@ -1,71 +1,275 @@
@@ -521,9 +521,9 @@ index 9df0b18..7418768 100644
 +        </div>
 +
 +        <div class="col-md-6">
-+            <h6 class="text-white fw-bold mb-3 d-flex justify-content-between">
++            <h6 class="text-white fw-bold mb-3 d-flex justify-content-between align-items-center">
 +                <span>Загруженность каналов 5 ГГц</span>
-+                <small class="text-muted">Каналы 36 - 165</small>
++                <span id="scan-5ghz-badge" class="badge bg-secondary-subtle text-muted">Каналы 36 - 165</span>
 +            </h6>
 +            <div id="crowd-bars-5" class="p-3 rounded-3" style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-subtle);">
 +                <div class="text-muted small text-center py-3">Ожидание запуска сканирования...</div>
@@ -660,10 +660,10 @@ index 9df0b18..7418768 100644
    </div>
  </div>
 diff --git a/utils/wifi/wifi_view.js b/utils/wifi/wifi_view.js
-index 9094a27..1126b31 100644
+index 9094a27..90b2f1b 100644
 --- a/utils/wifi/wifi_view.js
 +++ b/utils/wifi/wifi_view.js
-@@ -1,194 +1,934 @@
+@@ -1,194 +1,959 @@
 +// ==========================================================================
 +// GoOverseer Wi-Fi Telemetry, Analytics, Scanner & AP Security Logic
 +// ==========================================================================
@@ -993,7 +993,11 @@ index 9094a27..1126b31 100644
 +        const elQuality = document.getElementById("card-signal-quality");
 +        const elBadge = document.getElementById("badge-connection-state");
 +        const visualBars = document.getElementById("wifi-visual-bars");
-+
+ 
+-        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
+-        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
+-        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
+-        
 +        const isDisconnected = !latest.ssid || latest.ssid === "Disconnected" || latest.state === "отключено";
 +
 +        if (elSsid) elSsid.innerText = isDisconnected ? "Отключено" : latest.ssid;
@@ -1001,11 +1005,7 @@ index 9094a27..1126b31 100644
 +        if (elChannel) elChannel.innerText = latest.channel > 0 ? latest.channel : "—";
 +        if (elInterface) elInterface.innerText = latest.interface || "Wi-Fi";
 +        if (elStandard) elStandard.innerText = `Стандарт: ${latest.standard || '—'}`;
- 
--        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
--        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
--        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
--        
++
 +        if (elBand) {
 +            if (latest.channel >= 1 && latest.channel <= 14) {
 +                elBand.innerText = "2.4 ГГц";
@@ -1073,11 +1073,10 @@ index 9094a27..1126b31 100644
 -                elSignal.classList.add("text-warning");
 +                elBadge.className = "badge badge-custom badge-connected";
 +                elBadge.innerText = "Связь активна";
-             }
-         }
-     }
- 
--    tableBody.innerHTML = "";
++            }
++        }
++    }
++
 +    // 2. ОБНОВЛЕНИЕ ГРАФИКА CHART.JS
 +    if (wifiChartInstance && data && data.length > 0) {
 +        let chartData = data;
@@ -1096,14 +1095,14 @@ index 9094a27..1126b31 100644
 +            let label = "—";
 +            if (entry.time) {
 +                label = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
-+            }
+             }
 +            labels.push(label);
 +            points.push(entry.signal);
 +
 +            if (entry.signal > maxSig) maxSig = entry.signal;
 +            if (minSig === 0 || entry.signal < minSig) minSig = entry.signal;
 +            sumSig += entry.signal;
-+        }
+         }
 +
 +        wifiChartInstance.data.labels = labels;
 +        wifiChartInstance.data.datasets[0].data = points;
@@ -1121,8 +1120,9 @@ index 9094a27..1126b31 100644
 +        if (elStatMax) elStatMax.innerText = `${maxSig} dBm`;
 +        if (elStatMin) elStatMin.innerText = `${minSig} dBm`;
 +        if (elStatAvg) elStatAvg.innerText = `${avgSig} dBm`;
-+    }
-+
+     }
+ 
+-    tableBody.innerHTML = "";
 +    // 3. ОБНОВЛЕНИЕ ТАБЛИЦЫ ИСТОРИИ
 +    if (!tableBody) return;
  
@@ -1137,18 +1137,18 @@ index 9094a27..1126b31 100644
 -    wifiChartInstance.data.labels = [];
 -    wifiChartInstance.data.datasets[0].data = [];
 +    let filteredData = data;
-+
-+    if (currentLogFilter === 'connected') {
-+        filteredData = filteredData.filter(d => d.ssid && d.ssid !== "Disconnected" && d.state !== "отключено");
-+    } else if (currentLogFilter === 'disconnected') {
-+        filteredData = filteredData.filter(d => !d.ssid || d.ssid === "Disconnected" || d.state === "отключено");
-+    }
  
 -    const chartPoints = data.slice(-40);
 -    chartPoints.forEach(entry => {
 -        let labelTime = "—";
 -        if (entry.time) {
 -            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
++    if (currentLogFilter === 'connected') {
++        filteredData = filteredData.filter(d => d.ssid && d.ssid !== "Disconnected" && d.state !== "отключено");
++    } else if (currentLogFilter === 'disconnected') {
++        filteredData = filteredData.filter(d => !d.ssid || d.ssid === "Disconnected" || d.state === "отключено");
++    }
++
 +    if (searchQuery.trim() !== '') {
 +        const q = searchQuery.toLowerCase();
 +        filteredData = filteredData.filter(d =>
@@ -1311,10 +1311,11 @@ index 9094a27..1126b31 100644
 +    const spinner = document.getElementById('scan-btn-spinner');
 +    const tableBody = document.getElementById('scan-table-body');
 +    const totalCountEl = document.getElementById('scan-total-count');
++    const scan5ghzBadge = document.getElementById('scan-5ghz-badge');
 +
 +    if (spinner) spinner.classList.remove('d-none');
 +    if (tableBody) {
-+        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-info py-4"><span class="spinner-border spinner-border-sm me-2"></span>Сканирование радиоэфира через netsh...</td></tr>`;
++        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-info py-4"><span class="spinner-border spinner-border-sm me-2"></span>Аппаратный опрос радиоэфира (WlanScan)... Пожалуйста, подождите 1.5 сек.</td></tr>`;
 +    }
 +
 +    fetch('/api/utils/wifi/scan')
@@ -1333,8 +1334,32 @@ index 9094a27..1126b31 100644
 +            // Шкалы каналов 2.4 ГГц
 +            renderCrowdBars('crowd-bars-24', data.channel_crowd_24, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], data.recommended_channel);
 +
-+            // Шкалы каналов 5 ГГц
-+            renderCrowdBars('crowd-bars-5', data.channel_crowd_5, [36, 40, 44, 48, 52, 56, 149, 153, 157, 161], null);
++            // Обработка 5 ГГц и проверка поддержки оборудованием
++            if (scan5ghzBadge) {
++                if (data.supports_5ghz) {
++                    scan5ghzBadge.className = 'badge bg-success-subtle text-success border border-success';
++                    scan5ghzBadge.innerText = 'Адаптер 5 ГГц поддерживается';
++                } else {
++                    scan5ghzBadge.className = 'badge bg-warning-subtle text-warning border border-warning';
++                    scan5ghzBadge.innerText = 'Адаптер 2.4 ГГц (5 ГГц не поддерживается)';
++                }
++            }
++
++            if (!data.supports_5ghz) {
++                const c5 = document.getElementById('crowd-bars-5');
++                if (c5) {
++                    c5.innerHTML = `
++                        <div class="p-3 text-center text-warning small">
++                            <i class="bi bi-exclamation-triangle-fill fs-5 d-block mb-1"></i>
++                            <strong>Физическое ограничение оборудования:</strong><br>
++                            Ваш Wi-Fi адаптер поддерживает стандарты: <strong>${data.radio_types || '802.11b/g/n (2.4 GHz)'}</strong>.<br>
++                            Диапазон 5 ГГц физически не поддерживается чипом адаптера, поэтому сети 5 ГГц не принимаются.
++                        </div>
++                    `;
++                }
++            } else {
++                renderCrowdBars('crowd-bars-5', data.channel_crowd_5, [36, 40, 44, 48, 52, 56, 149, 153, 157, 161], data.recommended_channel_5 || null);
++            }
 +
 +            // Таблица обнаруженных точек
 +            if (totalCountEl) totalCountEl.innerText = data.total_bssids;
@@ -1595,9 +1620,8 @@ index 9094a27..1126b31 100644
 +    const input = document.getElementById("wifi-search-input");
 +    searchQuery = input ? input.value : "";
 +    renderAnalytics(cachedLogData);
- }
- 
--// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
++}
++
 +// Копирование BSSID в буфер обмена
 +function copyBssidToClipboard() {
 +    const el = document.getElementById("card-bssid");
@@ -1634,8 +1658,9 @@ index 9094a27..1126b31 100644
 +    link.click();
 +    document.body.removeChild(link);
 +    setTimeout(() => URL.revokeObjectURL(url), 1000);
-+}
-+
+ }
+ 
+-// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
 +// Экспорт истории в JSON
 +function exportLogsToJSON() {
 +    if (!cachedLogData || cachedLogData.length === 0) {
@@ -1912,10 +1937,10 @@ index 67f355e..ddbc1c1 100644
  			val = strings.TrimSuffix(val, "%")
  			pct, _ := strconv.Atoi(val)
 diff --git a/web/handlers.go b/web/handlers.go
-index 80a5bbd..01f326f 100644
+index 80a5bbd..d478b60 100644
 --- a/web/handlers.go
 +++ b/web/handlers.go
-@@ -5,14 +5,23 @@ import (
+@@ -5,14 +5,24 @@ import (
  	"fmt"
  	"html/template"
  	"io"
@@ -1931,6 +1956,7 @@ index 80a5bbd..01f326f 100644
 +	"syscall"
 +	"time"
 +	"unicode/utf8"
++	"unsafe"
 +
 +	"GoOverseer/utils"
  
@@ -1939,7 +1965,7 @@ index 80a5bbd..01f326f 100644
  )
  
  type UtilitySchema struct {
-@@ -35,39 +44,61 @@ type UtilityInfo struct {
+@@ -35,39 +45,61 @@ type UtilityInfo struct {
  	Settings    map[string]interface{} `json:"settings"`
  }
  
@@ -2015,17 +2041,17 @@ index 80a5bbd..01f326f 100644
 +func ScanUtils() ([]UtilityInfo, error) {
 +	var list []UtilityInfo
 +	subDirs := getUtilSubDirs()
++
++	appDataDir, _ := os.UserConfigDir()
  
 -		rawTemplate, err := os.ReadFile(infoFilePath)
-+	appDataDir, _ := os.UserConfigDir()
-+
 +	for _, dirName := range subDirs {
 +		infoFileName := dirName + "_info.json"
 +		rawTemplate, err := ReadUtilFile(dirName, infoFileName)
  		if err != nil {
  			continue
  		}
-@@ -105,45 +136,31 @@ func ScanUtils() ([]UtilityInfo, error) {
+@@ -105,45 +137,31 @@ func ScanUtils() ([]UtilityInfo, error) {
  	return list, nil
  }
  
@@ -2082,7 +2108,7 @@ index 80a5bbd..01f326f 100644
  		http.StripPrefix("/static/", fileServer).ServeHTTP(w, r)
  	})
  
-@@ -172,6 +189,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -172,6 +190,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write(jsonResponse)
  	})
  
@@ -2092,7 +2118,7 @@ index 80a5bbd..01f326f 100644
  	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -182,28 +202,52 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -182,28 +203,52 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2152,7 +2178,7 @@ index 80a5bbd..01f326f 100644
  		defaultSettings := make(map[string]string)
  		for _, schema := range target.UISchema {
  			defaultSettings[schema.Key] = schema.Default
-@@ -211,13 +255,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -211,13 +256,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
  		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
  
@@ -2172,7 +2198,7 @@ index 80a5bbd..01f326f 100644
  		if err := cmd.Start(); err != nil {
  			log.Printf("Предупреждение: не удалось запустить демон на лету: %v", err)
  		}
-@@ -226,6 +276,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -226,6 +277,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Activated successfully"))
  	})
  
@@ -2181,7 +2207,7 @@ index 80a5bbd..01f326f 100644
  	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -236,28 +288,47 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -236,28 +289,47 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2233,7 +2259,7 @@ index 80a5bbd..01f326f 100644
  
  		w.WriteHeader(http.StatusOK)
  		_, _ = w.Write([]byte("Deactivated successfully"))
-@@ -287,13 +358,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -287,13 +359,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		liveConfigPath := filepath.Join(appDataDir, "GoOverseer", id, "config.json")
  
  		if _, err := os.Stat(liveConfigPath); os.IsNotExist(err) {
@@ -2249,7 +2275,7 @@ index 80a5bbd..01f326f 100644
  			return
  		}
  
-@@ -311,7 +382,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -311,7 +383,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2258,7 +2284,7 @@ index 80a5bbd..01f326f 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -322,10 +393,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -322,10 +394,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  
@@ -2272,7 +2298,7 @@ index 80a5bbd..01f326f 100644
  			return
  		}
  
-@@ -342,13 +413,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -342,13 +414,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			"ID":          target.ID,
  			"Name":        target.Name,
  			"Description": target.Description,
@@ -2288,7 +2314,7 @@ index 80a5bbd..01f326f 100644
  	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
  		w.Header().Set("Content-Type", "application/json")
  		id := r.URL.Query().Get("id")
-@@ -360,7 +432,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -360,7 +433,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2297,7 +2323,7 @@ index 80a5bbd..01f326f 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -374,26 +446,112 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -374,26 +447,116 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		appDataDir, _ := os.UserConfigDir()
  		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
  
@@ -2378,6 +2404,10 @@ index 80a5bbd..01f326f 100644
 +	// Сканирование эфира и соседних сетей Wi-Fi
 +	mux.HandleFunc("GET /api/utils/wifi/scan", func(w http.ResponseWriter, r *http.Request) {
 +		w.Header().Set("Content-Type", "application/json")
++		// Принудительно вызываем активное аппаратное сканирование (Probe Request) через Native Wifi API,
++		// чтобы Windows обновила внутренний кэш окружающих сетей (как при открытии трея).
++		triggerWlanScan()
++
 +		res, err := scanSurroundingWifi()
 +		if err != nil {
 +			http.Error(w, "Ошибка сканирования сетей: "+err.Error(), http.StatusInternalServerError)
@@ -2414,7 +2444,7 @@ index 80a5bbd..01f326f 100644
  	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
  		pathParts := strings.Split(r.URL.Path, "/")
  		if len(pathParts) == 0 {
-@@ -407,8 +565,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -407,8 +570,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  		folderName := strings.ToLower(nameParts[0])
@@ -2424,13 +2454,102 @@ index 80a5bbd..01f326f 100644
  		if err != nil {
  			http.NotFound(w, r)
  			return
-@@ -423,5 +580,199 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -423,5 +585,309 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Stopping..."))
  		go shutdownCtxCancel()
  	})
 +
  	return mux
  }
++
++// Windows Native Wifi API (wlanapi.dll) для принудительного аппаратного сканирования эфира
++var (
++	wlanapi            = syscall.NewLazyDLL("wlanapi.dll")
++	wlanOpenHandle     = wlanapi.NewProc("WlanOpenHandle")
++	wlanEnumInterfaces = wlanapi.NewProc("WlanEnumInterfaces")
++	wlanScan           = wlanapi.NewProc("WlanScan")
++	wlanFreeMemory     = wlanapi.NewProc("WlanFreeMemory")
++	wlanCloseHandle    = wlanapi.NewProc("WlanCloseHandle")
++)
++
++// triggerWlanScan посылает Wi-Fi адаптеру команду активного сканирования (Probe Request на всех частотах).
++// В фоновом режиме Windows не опрашивает эфир для экономии батареи и ресурсов, пока пользователь
++// не откроет трей или программа не вызовет WlanScan.
++func triggerWlanScan() {
++	var negotiatedVersion uint32
++	var clientHandle uintptr
++
++	r1, _, _ := wlanOpenHandle.Call(2, 0, uintptr(unsafe.Pointer(&negotiatedVersion)), uintptr(unsafe.Pointer(&clientHandle)))
++	if r1 != 0 {
++		return
++	}
++	defer wlanCloseHandle.Call(clientHandle, 0)
++
++	var pInterfaceList uintptr
++	r1, _, _ = wlanEnumInterfaces.Call(clientHandle, 0, uintptr(unsafe.Pointer(&pInterfaceList)))
++	if r1 != 0 || pInterfaceList == 0 {
++		return
++	}
++	defer wlanFreeMemory.Call(pInterfaceList)
++
++	dwNumberOfItems := *(*uint32)(unsafe.Pointer(pInterfaceList))
++	if dwNumberOfItems == 0 {
++		return
++	}
++
++	// Структура WLAN_INTERFACE_INFO (532 байта): GUID (16) + Desc (512) + State (4)
++	base := pInterfaceList + 8
++	for i := uint32(0); i < dwNumberOfItems; i++ {
++		guidPtr := base + uintptr(i*532)
++		_, _, _ = wlanScan.Call(clientHandle, guidPtr, 0, 0, 0)
++	}
++
++	// Ожидаем 1.5 секунды, пока радиомодуль переключает каналы и принимает Beacon-фреймы
++	time.Sleep(1500 * time.Millisecond)
++}
++
++// getWifiDriverInfo проверяет физические возможности адаптера (поддержка 5 ГГц / стандарты 802.11)
++func getWifiDriverInfo() (supports5GHz bool, radioTypes string) {
++	cmd := exec.Command("netsh", "wlan", "show", "drivers")
++	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
++	out, err := cmd.Output()
++	if err != nil {
++		return false, ""
++	}
++
++	var rawStr string
++	if utf8.Valid(out) {
++		rawStr = string(out)
++	} else {
++		decoder := charmap.CodePage866.NewDecoder()
++		utf8Bytes, decErr := decoder.Bytes(out)
++		if decErr == nil {
++			rawStr = string(utf8Bytes)
++		} else {
++			rawStr = string(out)
++		}
++	}
++
++	lines := strings.Split(rawStr, "\n")
++	for _, line := range lines {
++		parts := strings.SplitN(line, ":", 2)
++		if len(parts) < 2 {
++			continue
++		}
++		k := strings.TrimSpace(parts[0])
++		v := strings.TrimSpace(parts[1])
++		if strings.Contains(k, "Поддерживаемые типы радиомодулей") || strings.Contains(k, "Radio types supported") {
++			radioTypes = v
++			lower := strings.ToLower(v)
++			// Стандарты 802.11a, 802.11ac, 802.11ax, 802.11be работают на 5 ГГц и выше
++			if strings.Contains(lower, "802.11a") || strings.Contains(lower, "802.11ac") || strings.Contains(lower, "802.11ax") || strings.Contains(lower, "802.11be") {
++				supports5GHz = true
++			}
++			break
++		}
++	}
++	return
++}
 +
 +// Структура для результатов сканирования соседних сетей Wi-Fi
 +type ScannedBSSID struct {
@@ -2450,12 +2569,15 @@ index 80a5bbd..01f326f 100644
 +}
 +
 +type ScanResult struct {
-+	Networks           []ScannedNetwork `json:"networks"`
-+	ChannelCrowd24     map[int]int      `json:"channel_crowd_24"`
-+	ChannelCrowd5      map[int]int      `json:"channel_crowd_5"`
-+	RecommendedChannel int              `json:"recommended_channel"`
-+	TotalBSSIDs        int              `json:"total_bssids"`
-+	ScanTime           string           `json:"scan_time"`
++	Networks            []ScannedNetwork `json:"networks"`
++	ChannelCrowd24      map[int]int      `json:"channel_crowd_24"`
++	ChannelCrowd5       map[int]int      `json:"channel_crowd_5"`
++	RecommendedChannel  int              `json:"recommended_channel"`
++	RecommendedChannel5 int              `json:"recommended_channel_5"`
++	TotalBSSIDs         int              `json:"total_bssids"`
++	ScanTime            string           `json:"scan_time"`
++	Supports5GHz        bool             `json:"supports_5ghz"`
++	RadioTypes          string           `json:"radio_types"`
 +}
 +
 +// Парсер вывода netsh wlan show networks mode=bssid
@@ -2470,6 +2592,11 @@ index 80a5bbd..01f326f 100644
 +		ChannelCrowd5:  make(map[int]int),
 +		ScanTime:       time.Now().Format("15:04:05"),
 +	}
++
++	// Считываем физические возможности драйвера адаптера
++	supp5, rTypes := getWifiDriverInfo()
++	res.Supports5GHz = supp5
++	res.RadioTypes = rTypes
 +
 +	if err != nil {
 +		return res, err
@@ -2571,6 +2698,7 @@ index 80a5bbd..01f326f 100644
 +		res.Networks = append(res.Networks, *currentNet)
 +	}
 +
++	// Выбираем наименее загруженный канал в 2.4 ГГц из непересекающихся (1, 6, 11)
 +	best24 := 1
 +	minCrowd := 999
 +	for _, ch := range []int{1, 6, 11} {
@@ -2581,6 +2709,18 @@ index 80a5bbd..01f326f 100644
 +		}
 +	}
 +	res.RecommendedChannel = best24
++
++	// В 5 ГГц
++	best5 := 36
++	minCrowd5 := 999
++	for _, ch := range []int{36, 40, 44, 48, 149, 153, 157, 161} {
++		crowd := res.ChannelCrowd5[ch]
++		if crowd < minCrowd5 {
++			minCrowd5 = crowd
++			best5 = ch
++		}
++	}
++	res.RecommendedChannel5 = best5
 +
 +	return res, nil
 +}

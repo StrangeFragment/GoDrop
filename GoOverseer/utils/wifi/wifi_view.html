@@ -169,7 +169,7 @@
 
 <!-- Содержимое вкладок -->
 <div class="tab-content" id="wifiTabContent">
-  
+
   <!-- 1. Вкладка интерактивного графика сигнала -->
   <div class="tab-pane fade show active glass-card p-4" id="chart-tab-pane" role="tabpanel" aria-labelledby="chart-tab" tabindex="0">
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
@@ -177,7 +177,7 @@
             <h5 class="fw-bold text-white mb-1">Уровень сигнала Wi-Fi (dBm) в реальном времени</h5>
             <small class="text-muted">Непрерывный мониторинг мощности радиосигнала и затуханий</small>
         </div>
-        
+
         <!-- Панель управления графиком -->
         <div class="d-flex align-items-center flex-wrap gap-2">
             <div class="d-flex align-items-center gap-1 me-2">
@@ -228,7 +228,7 @@
             <h5 class="fw-bold text-white mb-1">История радиоэфира и подключений</h5>
             <small class="text-muted">Журнал сессий и фиксация изменений параметров сети</small>
         </div>
-        
+
         <!-- Кнопки управления журналом -->
         <div class="d-flex align-items-center flex-wrap gap-2">
             <span class="small text-muted me-2">Размер файла: <strong id="log-size-badge" class="text-info">0 КБ</strong></span>
@@ -328,9 +328,9 @@
         </div>
 
         <div class="col-md-6">
-            <h6 class="text-white fw-bold mb-3 d-flex justify-content-between">
+            <h6 class="text-white fw-bold mb-3 d-flex justify-content-between align-items-center">
                 <span>Загруженность каналов 5 ГГц</span>
-                <small class="text-muted">Каналы 36 - 165</small>
+                <span id="scan-5ghz-badge" class="badge bg-secondary-subtle text-muted">Каналы 36 - 165</span>
             </h6>
             <div id="crowd-bars-5" class="p-3 rounded-3" style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-subtle);">
                 <div class="text-muted small text-center py-3">Ожидание запуска сканирования...</div>
@@ -434,7 +434,7 @@
         </table>
     </div>
   </div>
-  
+
   <!-- 5. Вкладка настроек параметров утилиты -->
   <div class="tab-pane fade glass-card p-4" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
     <div class="mb-4">

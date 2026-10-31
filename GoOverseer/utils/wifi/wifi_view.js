@@ -561,10 +561,11 @@ function performAirScan() {
     const spinner = document.getElementById('scan-btn-spinner');
     const tableBody = document.getElementById('scan-table-body');
     const totalCountEl = document.getElementById('scan-total-count');
+    const scan5ghzBadge = document.getElementById('scan-5ghz-badge');
 
     if (spinner) spinner.classList.remove('d-none');
     if (tableBody) {
-        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-info py-4"><span class="spinner-border spinner-border-sm me-2"></span>Сканирование радиоэфира через netsh...</td></tr>`;
+        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-info py-4"><span class="spinner-border spinner-border-sm me-2"></span>Аппаратный опрос радиоэфира (WlanScan)... Пожалуйста, подождите 1.5 сек.</td></tr>`;
     }
 
     fetch('/api/utils/wifi/scan')
@@ -583,8 +584,32 @@ function performAirScan() {
             // Шкалы каналов 2.4 ГГц
             renderCrowdBars('crowd-bars-24', data.channel_crowd_24, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], data.recommended_channel);
 
-            // Шкалы каналов 5 ГГц
-            renderCrowdBars('crowd-bars-5', data.channel_crowd_5, [36, 40, 44, 48, 52, 56, 149, 153, 157, 161], null);
+            // Обработка 5 ГГц и проверка поддержки оборудованием
+            if (scan5ghzBadge) {
+                if (data.supports_5ghz) {
+                    scan5ghzBadge.className = 'badge bg-success-subtle text-success border border-success';
+                    scan5ghzBadge.innerText = 'Адаптер 5 ГГц поддерживается';
+                } else {
+                    scan5ghzBadge.className = 'badge bg-warning-subtle text-warning border border-warning';
+                    scan5ghzBadge.innerText = 'Адаптер 2.4 ГГц (5 ГГц не поддерживается)';
+                }
+            }
+
+            if (!data.supports_5ghz) {
+                const c5 = document.getElementById('crowd-bars-5');
+                if (c5) {
+                    c5.innerHTML = `
+                        <div class="p-3 text-center text-warning small">
+                            <i class="bi bi-exclamation-triangle-fill fs-5 d-block mb-1"></i>
+                            <strong>Физическое ограничение оборудования:</strong><br>
+                            Ваш Wi-Fi адаптер поддерживает стандарты: <strong>${data.radio_types || '802.11b/g/n (2.4 GHz)'}</strong>.<br>
+                            Диапазон 5 ГГц физически не поддерживается чипом адаптера, поэтому сети 5 ГГц не принимаются.
+                        </div>
+                    `;
+                }
+            } else {
+                renderCrowdBars('crowd-bars-5', data.channel_crowd_5, [36, 40, 44, 48, 52, 56, 149, 153, 157, 161], data.recommended_channel_5 || null);
+            }
 
             // Таблица обнаруженных точек
             if (totalCountEl) totalCountEl.innerText = data.total_bssids;

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"GoOverseer/utils"
 
@@ -519,6 +520,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 	// Сканирование эфира и соседних сетей Wi-Fi
 	mux.HandleFunc("GET /api/utils/wifi/scan", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// Принудительно вызываем активное аппаратное сканирование (Probe Request) через Native Wifi API,
+		// чтобы Windows обновила внутренний кэш окружающих сетей (как при открытии трея).
+		triggerWlanScan()
+
 		res, err := scanSurroundingWifi()
 		if err != nil {
 			http.Error(w, "Ошибка сканирования сетей: "+err.Error(), http.StatusInternalServerError)
@@ -584,6 +589,95 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 	return mux
 }
 
+// Windows Native Wifi API (wlanapi.dll) для принудительного аппаратного сканирования эфира
+var (
+	wlanapi            = syscall.NewLazyDLL("wlanapi.dll")
+	wlanOpenHandle     = wlanapi.NewProc("WlanOpenHandle")
+	wlanEnumInterfaces = wlanapi.NewProc("WlanEnumInterfaces")
+	wlanScan           = wlanapi.NewProc("WlanScan")
+	wlanFreeMemory     = wlanapi.NewProc("WlanFreeMemory")
+	wlanCloseHandle    = wlanapi.NewProc("WlanCloseHandle")
+)
+
+// triggerWlanScan посылает Wi-Fi адаптеру команду активного сканирования (Probe Request на всех частотах).
+// В фоновом режиме Windows не опрашивает эфир для экономии батареи и ресурсов, пока пользователь
+// не откроет трей или программа не вызовет WlanScan.
+func triggerWlanScan() {
+	var negotiatedVersion uint32
+	var clientHandle uintptr
+
+	r1, _, _ := wlanOpenHandle.Call(2, 0, uintptr(unsafe.Pointer(&negotiatedVersion)), uintptr(unsafe.Pointer(&clientHandle)))
+	if r1 != 0 {
+		return
+	}
+	defer wlanCloseHandle.Call(clientHandle, 0)
+
+	var pInterfaceList uintptr
+	r1, _, _ = wlanEnumInterfaces.Call(clientHandle, 0, uintptr(unsafe.Pointer(&pInterfaceList)))
+	if r1 != 0 || pInterfaceList == 0 {
+		return
+	}
+	defer wlanFreeMemory.Call(pInterfaceList)
+
+	dwNumberOfItems := *(*uint32)(unsafe.Pointer(pInterfaceList))
+	if dwNumberOfItems == 0 {
+		return
+	}
+
+	// Структура WLAN_INTERFACE_INFO (532 байта): GUID (16) + Desc (512) + State (4)
+	base := pInterfaceList + 8
+	for i := uint32(0); i < dwNumberOfItems; i++ {
+		guidPtr := base + uintptr(i*532)
+		_, _, _ = wlanScan.Call(clientHandle, guidPtr, 0, 0, 0)
+	}
+
+	// Ожидаем 1.5 секунды, пока радиомодуль переключает каналы и принимает Beacon-фреймы
+	time.Sleep(1500 * time.Millisecond)
+}
+
+// getWifiDriverInfo проверяет физические возможности адаптера (поддержка 5 ГГц / стандарты 802.11)
+func getWifiDriverInfo() (supports5GHz bool, radioTypes string) {
+	cmd := exec.Command("netsh", "wlan", "show", "drivers")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
+	if err != nil {
+		return false, ""
+	}
+
+	var rawStr string
+	if utf8.Valid(out) {
+		rawStr = string(out)
+	} else {
+		decoder := charmap.CodePage866.NewDecoder()
+		utf8Bytes, decErr := decoder.Bytes(out)
+		if decErr == nil {
+			rawStr = string(utf8Bytes)
+		} else {
+			rawStr = string(out)
+		}
+	}
+
+	lines := strings.Split(rawStr, "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		k := strings.TrimSpace(parts[0])
+		v := strings.TrimSpace(parts[1])
+		if strings.Contains(k, "Поддерживаемые типы радиомодулей") || strings.Contains(k, "Radio types supported") {
+			radioTypes = v
+			lower := strings.ToLower(v)
+			// Стандарты 802.11a, 802.11ac, 802.11ax, 802.11be работают на 5 ГГц и выше
+			if strings.Contains(lower, "802.11a") || strings.Contains(lower, "802.11ac") || strings.Contains(lower, "802.11ax") || strings.Contains(lower, "802.11be") {
+				supports5GHz = true
+			}
+			break
+		}
+	}
+	return
+}
+
 // Структура для результатов сканирования соседних сетей Wi-Fi
 type ScannedBSSID struct {
 	BSSID     string `json:"bssid"`
@@ -602,12 +696,15 @@ type ScannedNetwork struct {
 }
 
 type ScanResult struct {
-	Networks           []ScannedNetwork `json:"networks"`
-	ChannelCrowd24     map[int]int      `json:"channel_crowd_24"`
-	ChannelCrowd5      map[int]int      `json:"channel_crowd_5"`
-	RecommendedChannel int              `json:"recommended_channel"`
-	TotalBSSIDs        int              `json:"total_bssids"`
-	ScanTime           string           `json:"scan_time"`
+	Networks            []ScannedNetwork `json:"networks"`
+	ChannelCrowd24      map[int]int      `json:"channel_crowd_24"`
+	ChannelCrowd5       map[int]int      `json:"channel_crowd_5"`
+	RecommendedChannel  int              `json:"recommended_channel"`
+	RecommendedChannel5 int              `json:"recommended_channel_5"`
+	TotalBSSIDs         int              `json:"total_bssids"`
+	ScanTime            string           `json:"scan_time"`
+	Supports5GHz        bool             `json:"supports_5ghz"`
+	RadioTypes          string           `json:"radio_types"`
 }
 
 // Парсер вывода netsh wlan show networks mode=bssid
@@ -622,6 +719,11 @@ func scanSurroundingWifi() (ScanResult, error) {
 		ChannelCrowd5:  make(map[int]int),
 		ScanTime:       time.Now().Format("15:04:05"),
 	}
+
+	// Считываем физические возможности драйвера адаптера
+	supp5, rTypes := getWifiDriverInfo()
+	res.Supports5GHz = supp5
+	res.RadioTypes = rTypes
 
 	if err != nil {
 		return res, err
@@ -723,6 +825,7 @@ func scanSurroundingWifi() (ScanResult, error) {
 		res.Networks = append(res.Networks, *currentNet)
 	}
 
+	// Выбираем наименее загруженный канал в 2.4 ГГц из непересекающихся (1, 6, 11)
 	best24 := 1
 	minCrowd := 999
 	for _, ch := range []int{1, 6, 11} {
@@ -733,6 +836,18 @@ func scanSurroundingWifi() (ScanResult, error) {
 		}
 	}
 	res.RecommendedChannel = best24
+
+	// В 5 ГГц
+	best5 := 36
+	minCrowd5 := 999
+	for _, ch := range []int{36, 40, 44, 48, 149, 153, 157, 161} {
+		crowd := res.ChannelCrowd5[ch]
+		if crowd < minCrowd5 {
+			minCrowd5 = crowd
+			best5 = ch
+		}
+	}
+	res.RecommendedChannel5 = best5
 
 	return res, nil
 }
