@@ -16,10 +16,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"GoOverseer/utils"
 
 	"golang.org/x/sys/windows/registry"
+	"golang.org/x/text/encoding/charmap"
 )
 
 type UtilitySchema struct {
@@ -625,7 +627,21 @@ func scanSurroundingWifi() (ScanResult, error) {
 		return res, err
 	}
 
-	lines := strings.Split(string(out), "\n")
+	// Декодируем OEM CP866 вывод Windows консоли
+	var rawStr string
+	if utf8.Valid(out) {
+		rawStr = string(out)
+	} else {
+		decoder := charmap.CodePage866.NewDecoder()
+		utf8Bytes, decErr := decoder.Bytes(out)
+		if decErr == nil {
+			rawStr = string(utf8Bytes)
+		} else {
+			rawStr = string(out)
+		}
+	}
+
+	lines := strings.Split(rawStr, "\n")
 	var currentNet *ScannedNetwork
 	var currentBSSID *ScannedBSSID
 
@@ -646,6 +662,7 @@ func scanSurroundingWifi() (ScanResult, error) {
 			if currentNet != nil {
 				if currentBSSID != nil {
 					currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
+					res.TotalBSSIDs++
 					currentBSSID = nil
 				}
 				res.Networks = append(res.Networks, *currentNet)
@@ -669,11 +686,12 @@ func scanSurroundingWifi() (ScanResult, error) {
 		case strings.HasPrefix(k, "BSSID "):
 			if currentBSSID != nil {
 				currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
+				res.TotalBSSIDs++
 			}
 			currentBSSID = &ScannedBSSID{BSSID: v}
 		case strings.Contains(k, "Сигнал") || strings.Contains(k, "Signal"):
 			if currentBSSID != nil {
-				val := strings.TrimSuffix(v, "%")
+				val := strings.TrimSpace(strings.TrimSuffix(v, "%"))
 				pct, _ := strconv.Atoi(val)
 				currentBSSID.Signal = pct
 				currentBSSID.SignalDbm = (pct / 2) - 100
@@ -684,7 +702,7 @@ func scanSurroundingWifi() (ScanResult, error) {
 			}
 		case strings.Contains(k, "Канал") || strings.Contains(k, "Channel"):
 			if currentBSSID != nil {
-				ch, _ := strconv.Atoi(v)
+				ch, _ := strconv.Atoi(strings.TrimSpace(v))
 				currentBSSID.Channel = ch
 				if ch >= 1 && ch <= 14 {
 					currentBSSID.Band = "2.4 GHz"
@@ -693,7 +711,6 @@ func scanSurroundingWifi() (ScanResult, error) {
 					currentBSSID.Band = "5 GHz"
 					res.ChannelCrowd5[ch]++
 				}
-				res.TotalBSSIDs++
 			}
 		}
 	}
@@ -701,6 +718,7 @@ func scanSurroundingWifi() (ScanResult, error) {
 	if currentNet != nil {
 		if currentBSSID != nil {
 			currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
+			res.TotalBSSIDs++
 		}
 		res.Networks = append(res.Networks, *currentNet)
 	}

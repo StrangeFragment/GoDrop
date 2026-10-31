@@ -1912,10 +1912,10 @@ index 67f355e..ddbc1c1 100644
  			val = strings.TrimSuffix(val, "%")
  			pct, _ := strconv.Atoi(val)
 diff --git a/web/handlers.go b/web/handlers.go
-index 80a5bbd..c5d0b70 100644
+index 80a5bbd..01f326f 100644
 --- a/web/handlers.go
 +++ b/web/handlers.go
-@@ -5,12 +5,19 @@ import (
+@@ -5,14 +5,23 @@ import (
  	"fmt"
  	"html/template"
  	"io"
@@ -1930,12 +1930,16 @@ index 80a5bbd..c5d0b70 100644
  	"strings"
 +	"syscall"
 +	"time"
++	"unicode/utf8"
 +
 +	"GoOverseer/utils"
  
  	"golang.org/x/sys/windows/registry"
++	"golang.org/x/text/encoding/charmap"
  )
-@@ -35,39 +42,61 @@ type UtilityInfo struct {
+ 
+ type UtilitySchema struct {
+@@ -35,39 +44,61 @@ type UtilityInfo struct {
  	Settings    map[string]interface{} `json:"settings"`
  }
  
@@ -2021,7 +2025,7 @@ index 80a5bbd..c5d0b70 100644
  		if err != nil {
  			continue
  		}
-@@ -105,45 +134,31 @@ func ScanUtils() ([]UtilityInfo, error) {
+@@ -105,45 +136,31 @@ func ScanUtils() ([]UtilityInfo, error) {
  	return list, nil
  }
  
@@ -2078,7 +2082,7 @@ index 80a5bbd..c5d0b70 100644
  		http.StripPrefix("/static/", fileServer).ServeHTTP(w, r)
  	})
  
-@@ -172,6 +187,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -172,6 +189,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write(jsonResponse)
  	})
  
@@ -2088,7 +2092,7 @@ index 80a5bbd..c5d0b70 100644
  	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -182,28 +200,52 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -182,28 +202,52 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2148,7 +2152,7 @@ index 80a5bbd..c5d0b70 100644
  		defaultSettings := make(map[string]string)
  		for _, schema := range target.UISchema {
  			defaultSettings[schema.Key] = schema.Default
-@@ -211,13 +253,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -211,13 +255,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
  		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
  
@@ -2168,7 +2172,7 @@ index 80a5bbd..c5d0b70 100644
  		if err := cmd.Start(); err != nil {
  			log.Printf("Предупреждение: не удалось запустить демон на лету: %v", err)
  		}
-@@ -226,6 +274,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -226,6 +276,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Activated successfully"))
  	})
  
@@ -2177,7 +2181,7 @@ index 80a5bbd..c5d0b70 100644
  	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -236,28 +286,47 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -236,28 +288,47 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2229,7 +2233,7 @@ index 80a5bbd..c5d0b70 100644
  
  		w.WriteHeader(http.StatusOK)
  		_, _ = w.Write([]byte("Deactivated successfully"))
-@@ -287,13 +356,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -287,13 +358,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		liveConfigPath := filepath.Join(appDataDir, "GoOverseer", id, "config.json")
  
  		if _, err := os.Stat(liveConfigPath); os.IsNotExist(err) {
@@ -2245,7 +2249,7 @@ index 80a5bbd..c5d0b70 100644
  			return
  		}
  
-@@ -311,7 +380,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -311,7 +382,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2254,7 +2258,7 @@ index 80a5bbd..c5d0b70 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -322,10 +391,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -322,10 +393,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  
@@ -2268,7 +2272,7 @@ index 80a5bbd..c5d0b70 100644
  			return
  		}
  
-@@ -342,13 +411,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -342,13 +413,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			"ID":          target.ID,
  			"Name":        target.Name,
  			"Description": target.Description,
@@ -2284,7 +2288,7 @@ index 80a5bbd..c5d0b70 100644
  	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
  		w.Header().Set("Content-Type", "application/json")
  		id := r.URL.Query().Get("id")
-@@ -360,7 +430,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -360,7 +432,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -2293,7 +2297,7 @@ index 80a5bbd..c5d0b70 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -374,26 +444,112 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -374,26 +446,112 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		appDataDir, _ := os.UserConfigDir()
  		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
  
@@ -2410,7 +2414,7 @@ index 80a5bbd..c5d0b70 100644
  	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
  		pathParts := strings.Split(r.URL.Path, "/")
  		if len(pathParts) == 0 {
-@@ -407,8 +563,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -407,8 +565,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  		folderName := strings.ToLower(nameParts[0])
@@ -2420,7 +2424,7 @@ index 80a5bbd..c5d0b70 100644
  		if err != nil {
  			http.NotFound(w, r)
  			return
-@@ -423,5 +578,183 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -423,5 +580,199 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Stopping..."))
  		go shutdownCtxCancel()
  	})
@@ -2471,7 +2475,21 @@ index 80a5bbd..c5d0b70 100644
 +		return res, err
 +	}
 +
-+	lines := strings.Split(string(out), "\n")
++	// Декодируем OEM CP866 вывод Windows консоли
++	var rawStr string
++	if utf8.Valid(out) {
++		rawStr = string(out)
++	} else {
++		decoder := charmap.CodePage866.NewDecoder()
++		utf8Bytes, decErr := decoder.Bytes(out)
++		if decErr == nil {
++			rawStr = string(utf8Bytes)
++		} else {
++			rawStr = string(out)
++		}
++	}
++
++	lines := strings.Split(rawStr, "\n")
 +	var currentNet *ScannedNetwork
 +	var currentBSSID *ScannedBSSID
 +
@@ -2492,6 +2510,7 @@ index 80a5bbd..c5d0b70 100644
 +			if currentNet != nil {
 +				if currentBSSID != nil {
 +					currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
++					res.TotalBSSIDs++
 +					currentBSSID = nil
 +				}
 +				res.Networks = append(res.Networks, *currentNet)
@@ -2515,11 +2534,12 @@ index 80a5bbd..c5d0b70 100644
 +		case strings.HasPrefix(k, "BSSID "):
 +			if currentBSSID != nil {
 +				currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
++				res.TotalBSSIDs++
 +			}
 +			currentBSSID = &ScannedBSSID{BSSID: v}
 +		case strings.Contains(k, "Сигнал") || strings.Contains(k, "Signal"):
 +			if currentBSSID != nil {
-+				val := strings.TrimSuffix(v, "%")
++				val := strings.TrimSpace(strings.TrimSuffix(v, "%"))
 +				pct, _ := strconv.Atoi(val)
 +				currentBSSID.Signal = pct
 +				currentBSSID.SignalDbm = (pct / 2) - 100
@@ -2530,7 +2550,7 @@ index 80a5bbd..c5d0b70 100644
 +			}
 +		case strings.Contains(k, "Канал") || strings.Contains(k, "Channel"):
 +			if currentBSSID != nil {
-+				ch, _ := strconv.Atoi(v)
++				ch, _ := strconv.Atoi(strings.TrimSpace(v))
 +				currentBSSID.Channel = ch
 +				if ch >= 1 && ch <= 14 {
 +					currentBSSID.Band = "2.4 GHz"
@@ -2539,7 +2559,6 @@ index 80a5bbd..c5d0b70 100644
 +					currentBSSID.Band = "5 GHz"
 +					res.ChannelCrowd5[ch]++
 +				}
-+				res.TotalBSSIDs++
 +			}
 +		}
 +	}
@@ -2547,6 +2566,7 @@ index 80a5bbd..c5d0b70 100644
 +	if currentNet != nil {
 +		if currentBSSID != nil {
 +			currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
++			res.TotalBSSIDs++
 +		}
 +		res.Networks = append(res.Networks, *currentNet)
 +	}
