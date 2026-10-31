@@ -2765,10 +2765,10 @@ index 80a5bbd..d478b60 100644
 +	return 0, true
 +}
 diff --git a/web/static/css/app.css b/web/static/css/app.css
-index e69de29..4326dcb 100644
+index e69de29..bea8bd6 100644
 --- a/web/static/css/app.css
 +++ b/web/static/css/app.css
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,375 @@
 +/* ==========================================================================
 +   GoOverseer Modern UI Dashboard Theme
 +   Dark Cyber/Glassmorphism Design System
@@ -2801,6 +2801,19 @@ index e69de29..4326dcb 100644
 +
 +  --shadow-card: 0 10px 30px -5px rgba(0, 0, 0, 0.4), 0 0 1px 1px rgba(255, 255, 255, 0.05);
 +  --shadow-glow-cyan: 0 0 20px -3px rgba(6, 182, 212, 0.35);
++}
++
++/* Предотвращение сдвига/прыжка макета при появлении полосы прокрутки */
++html {
++  scrollbar-gutter: stable;
++  overflow-y: scroll;
++  scrollbar-width: thin;
++  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(0, 0, 0, 0.2);
++}
++
++.table-responsive {
++  scrollbar-gutter: stable;
++  scrollbar-width: thin;
 +}
 +
 +/* Общий стиль страницы */

@@ -32,6 +32,19 @@
   --shadow-glow-cyan: 0 0 20px -3px rgba(6, 182, 212, 0.35);
 }
 
+/* Предотвращение сдвига/прыжка макета при появлении полосы прокрутки */
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(0, 0, 0, 0.2);
+}
+
+.table-responsive {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
 /* Общий стиль страницы */
 body {
   background-color: var(--bg-app) !important;
