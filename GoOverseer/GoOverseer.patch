@@ -162,7 +162,7 @@ index 6173190..a6f091b 100644
      }
    ]
 diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
-index 9df0b18..151898e 100644
+index 9df0b18..1e4e1dc 100644
 --- a/utils/wifi/wifi_view.html
 +++ b/utils/wifi/wifi_view.html
 @@ -1,71 +1,286 @@
@@ -485,20 +485,13 @@ index 9df0b18..151898e 100644
                  <tr>
                      <th>Время события</th>
                      <th>Сеть (SSID)</th>
-@@ -74,24 +289,219 @@
+@@ -74,24 +289,249 @@
                      <th>Стандарт</th>
                      <th>Скорость (Rx/Tx)</th>
                      <th>Сигнал</th>
 +                    <th>Статус</th>
-                 </tr>
-             </thead>
--            
--        <tbody id="wifi-log-table-body">
--            <!-- НАША ИСПРАВЛЕННАЯ СТРОКА: оригинальный JS ищет именно этот id -->
--            <tr id="wifi-log-table-loading">
--                <td colspan="7" class="text-center text-muted py-4">Считывание файла wifi_records.jsonl...</td>
--            </tr>
--        </tbody>
++                </tr>
++            </thead>
 +            <tbody id="wifi-log-table-body">
 +                <tr id="wifi-log-table-loading">
 +                    <td colspan="8" class="text-center text-muted py-5">
@@ -510,7 +503,7 @@ index 9df0b18..151898e 100644
 +        </table>
 +    </div>
 +  </div>
- 
++
 +  <!-- 3. Вкладка сканера зашумленности радиоэфира -->
 +  <div class="tab-pane fade glass-card p-4" id="scanner-tab-pane" role="tabpanel" aria-labelledby="scanner-tab" tabindex="0">
 +    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
@@ -569,15 +562,22 @@ index 9df0b18..151898e 100644
 +                    <th>Сигнал</th>
 +                    <th>Тип сети</th>
 +                    <th>Шифрование</th>
-+                </tr>
-+            </thead>
+                 </tr>
+             </thead>
+-            
+-        <tbody id="wifi-log-table-body">
+-            <!-- НАША ИСПРАВЛЕННАЯ СТРОКА: оригинальный JS ищет именно этот id -->
+-            <tr id="wifi-log-table-loading">
+-                <td colspan="7" class="text-center text-muted py-4">Считывание файла wifi_records.jsonl...</td>
+-            </tr>
+-        </tbody>
 +            <tbody id="scan-table-body">
 +                <tr><td colspan="7" class="text-center text-muted py-4">Нажмите «Сканировать эфир» для сбора данных</td></tr>
 +            </tbody>
 +        </table>
 +    </div>
 +  </div>
-+
+ 
 +  <!-- 4. Вкладка реестра точек доступа и детектора подмены (Rogue AP) -->
 +  <div class="tab-pane fade glass-card p-4" id="security-tab-pane" role="tabpanel" aria-labelledby="security-tab" tabindex="0">
 +    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
@@ -630,8 +630,8 @@ index 9df0b18..151898e 100644
 +            <tbody id="security-registry-table-body">
 +                <tr><td colspan="7" class="text-center text-muted py-4">Сбор данных из истории...</td></tr>
 +            </tbody>
-+        </table>
-+    </div>
+         </table>
+     </div>
 +
 +    <!-- Хронология инцидентов и переключений точек -->
 +    <h6 class="text-white fw-bold mb-2">Хронология смены точек доступа (Роуминг / Возможная подмена):</h6>
@@ -649,15 +649,9 @@ index 9df0b18..151898e 100644
 +            <tbody id="security-anomalies-table-body">
 +                <tr><td colspan="5" class="text-center text-muted py-4">Событий смены точек доступа не зафиксировано.</td></tr>
 +            </tbody>
-         </table>
-     </div>
-   </div>
--  
--  <!-- 3. Вкладка настроек параметров утилиты -->
--  <div class="tab-pane fade border border-translucent rounded p-4 bg-body-tertiary" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
--    <h5 class="text-primary fw-bold mb-3">Настройки параметров демона:</h5>
--    <div id="wifi-custom-config-fields" class="row"></div>
--    <button class="btn btn-primary btn-sm mt-3" onclick="saveWifiSettings()">Сохранить изменения</button>
++        </table>
++    </div>
++  </div>
 +
 +  <!-- 5. Вкладка настроек параметров утилиты -->
 +  <div class="tab-pane fade glass-card p-4" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
@@ -670,12 +664,48 @@ index 9df0b18..151898e 100644
 +        <!-- Поля формы подгружаются динамически -->
 +    </div>
 +
++    <!-- Диагностическое оповещение: Режим энергосбережения Wi-Fi адаптера в Windows -->
++    <div class="card p-3 rounded-3 mt-4 mb-2" style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3);">
++        <div class="d-flex align-items-start gap-3">
++            <div class="text-warning fs-3">
++                <svg width="28" height="28" fill="currentColor" viewBox="0 0 16 16">
++                    <path d="M11.251.068a.5.5 0 0 1 .227.58L9.677 6.5H13a.5.5 0 0 1 .364.843l-8 8.5a.5.5 0 0 1-.842-.49L6.323 9.5H3a.5.5 0 0 1-.364-.843l8-8.5a.5.5 0 0 1 .615-.09z"/>
++                </svg>
++            </div>
++            <div class="flex-grow-1">
++                <div class="d-flex justify-content-between align-items-center mb-1">
++                    <h6 class="text-warning fw-bold mb-0">Внимание: Режим сна и энергосбережения Wi-Fi адаптера (Windows Power Management)</h6>
++                    <span class="badge bg-warning-subtle text-warning border border-warning">Рекомендация сисадмина</span>
++                </div>
++                <div class="small text-light" style="line-height: 1.5;">
++                    По умолчанию в Windows на 99% ноутбуков и ПК активна системная опция <em>«Разрешить отключение этого устройства для экономии энергии»</em>.
++                    При отсутствии сетевой активности или переходе в режим экономии Windows принудительно отключает радиомодуль Wi-Fi на 5–15 секунд, вызывая кратковременные разрывы связи, заикания звонков и внезапные «отвалы» сети, на которые часто жалуются пользователи.
++                </div>
++                <div class="p-2 rounded-2 mt-2" style="background: rgba(0, 0, 0, 0.25); border: 1px dashed rgba(255, 255, 255, 0.15);">
++                    <div class="small fw-semibold text-warning mb-1">Как отключить засыпание адаптера вручную:</div>
++                    <ol class="small text-muted mb-0 ps-3">
++                        <li>Нажмите сочетание клавиш <kbd class="bg-dark text-light border border-secondary">Win + X</kbd> и выберите <strong>«Диспетчер устройств»</strong> (или выполните команду <code class="text-info">devmgmt.msc</code>).</li>
++                        <li>Разверните ветку <strong>«Сетевые адаптеры»</strong> и дважды кликните по вашему Wi-Fi адаптеру.</li>
++                        <li>Перейдите во вкладку <strong>«Управление электропитанием»</strong> (Power Management).</li>
++                        <li><strong>Снимите флажок</strong> с пункта: <em>«Разрешить отключение этого устройства для экономии энергии»</em> и нажмите <strong>ОК</strong>.</li>
++                    </ol>
++                </div>
++            </div>
++        </div>
++    </div>
++
 +    <div class="mt-4 pt-3 border-top border-secondary-subtle">
 +        <button class="btn btn-cyan rounded-pill px-4" onclick="saveWifiSettings()">
 +            Сохранить и применить на лету
 +        </button>
 +    </div>
-+  </div>
+   </div>
+-  
+-  <!-- 3. Вкладка настроек параметров утилиты -->
+-  <div class="tab-pane fade border border-translucent rounded p-4 bg-body-tertiary" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
+-    <h5 class="text-primary fw-bold mb-3">Настройки параметров демона:</h5>
+-    <div id="wifi-custom-config-fields" class="row"></div>
+-    <button class="btn btn-primary btn-sm mt-3" onclick="saveWifiSettings()">Сохранить изменения</button>
 +</div>
 +
 +<!-- Модальное окно: Сводный диагностический отчёт для руководства -->
