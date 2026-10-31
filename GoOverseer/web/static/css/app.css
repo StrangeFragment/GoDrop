@@ -302,3 +302,61 @@ body {
   color: var(--text-main);
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
 }
+
+/* Фиксированный подвал (Sticky Footer) */
+.footer-fixed {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1020;
+  background: rgba(11, 15, 25, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid var(--border-subtle);
+  padding: 11px 0;
+  text-align: center;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.4);
+}
+
+.footer-fixed strong {
+  color: var(--text-muted);
+}
+
+/* Отступ снизу для контента, чтобы подвал не перекрывал элементы */
+body {
+  padding-bottom: 60px !important;
+}
+
+/* Шкалы зашумленности каналов */
+.channel-bar-container {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  overflow: hidden;
+  height: 8px;
+  margin-top: 4px;
+}
+
+.channel-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+
+/* Бейджи безопасности точек доступа */
+.badge-rogue-warning {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  font-weight: 600;
+}
+
+.badge-mesh {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  font-weight: 600;
+}

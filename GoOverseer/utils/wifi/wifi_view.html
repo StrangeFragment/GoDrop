@@ -1,5 +1,5 @@
 <!-- Живые карточки экспресс-аналитики Wi-Fi радиоэфира -->
-<div class="row row-cols-1 row-cols-sm-2 row-cols-xl-4 g-3 mb-4">
+<div class="row row-cols-1 row-cols-sm-2 row-cols-xl-4 g-3 mb-3">
     <!-- Карточка 1: SSID -->
     <div class="col">
         <div class="card glass-card metric-card metric-card-ssid h-100 p-3">
@@ -89,6 +89,38 @@
     </div>
 </div>
 
+<!-- Блок мониторинга задержки шлюза / пинга с отдельной активацией -->
+<div class="card glass-card p-3 mb-4">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+        <div class="d-flex align-items-center gap-3">
+            <div class="metric-icon-bubble" style="background: rgba(6, 182, 212, 0.1); border-color: rgba(6, 182, 212, 0.25); color: #06b6d4;">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                    <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3.5a.5.5 0 0 1-.5-.5v-4A.5.5 0 0 1 8 4z"/>
+                </svg>
+            </div>
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fw-bold text-white">Задержка сети (Ping RTT):</span>
+                    <span id="ping-result-badge" class="badge bg-secondary-subtle text-light rounded-pill px-2 py-1">Не проверялось</span>
+                </div>
+                <small class="text-muted" id="ping-details-text">Проверка сетевого шлюза и стабильности провайдера</small>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center flex-wrap gap-3">
+            <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="toggle-auto-ping" onchange="toggleAutoPing(this.checked)">
+                <label class="form-check-label text-muted small fw-semibold" for="toggle-auto-ping">Фоновый мониторинг (15с)</label>
+            </div>
+            <button class="btn btn-sm btn-outline-info rounded-pill px-3" id="btn-manual-ping" onclick="checkGatewayPing()">
+                <span id="ping-btn-spinner" class="spinner-border spinner-border-sm me-1 d-none" role="status"></span>
+                Проверить задержку
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Вкладки управления и аналитики -->
 <ul class="nav nav-tabs nav-tabs-modern mb-4" id="wifiTab" role="tablist">
   <li class="nav-item" role="presentation">
@@ -106,6 +138,22 @@
         <path d="M6.5 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
       </svg>
       История подключений
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link d-flex align-items-center gap-2" id="scanner-tab" data-bs-toggle="tab" data-bs-target="#scanner-tab-pane" type="button" role="tab" aria-controls="scanner-tab-pane" aria-selected="false">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/>
+      </svg>
+      Анализ радиоэфира
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link d-flex align-items-center gap-2" id="security-tab" data-bs-toggle="tab" data-bs-target="#security-tab-pane" type="button" role="tab" aria-controls="security-tab-pane" aria-selected="false">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M8 0c-.69 0-1.843.265-2.928.56-1.11.3-2.229.655-2.887.87a1.54 1.54 0 0 0-1.044 1.262c-.596 4.477.787 7.795 2.464 9.99 1.572 2.053 3.483 3.09 4.316 3.313.064.017.13.025.195.025s.131-.008.195-.025c.833-.223 2.744-1.26 4.316-3.313 1.677-2.195 3.06-5.513 2.464-9.99a1.54 1.54 0 0 0-1.044-1.263 62.467 62.467 0 0 0-2.887-.87C9.843.266 8.69 0 8 0zm0 1.072c.628 0 1.67.24 2.72.528.847.23 1.71.49 2.31.678.435 3.86-.677 6.78-2.18 8.74C9.53 12.72 8.434 13.568 8 13.82c-.434-.252-1.53-.1-2.85-2.802-1.503-1.96-2.615-4.88-2.18-8.74.6-.188 1.463-.448 2.31-.678 1.05-.288 2.092-.528 2.72-.528z"/>
+      </svg>
+      Реестр точек и безопасность
     </button>
   </li>
   <li class="nav-item" role="presentation">
@@ -132,6 +180,17 @@
         
         <!-- Панель управления графиком -->
         <div class="d-flex align-items-center flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-1 me-2">
+                <small class="text-muted">Опрос:</small>
+                <select id="poll-interval-select" class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;" onchange="changePollInterval(this.value)">
+                    <option value="1">1 сек</option>
+                    <option value="3" selected>3 сек</option>
+                    <option value="5">5 сек</option>
+                    <option value="10">10 сек</option>
+                    <option value="30">30 сек</option>
+                </select>
+            </div>
+
             <div class="btn-group btn-group-sm" role="group" aria-label="Диапазон точек">
                 <button type="button" class="btn btn-outline-secondary active" onclick="setChartPointsLimit(30)">30 точек</button>
                 <button type="button" class="btn btn-outline-secondary" onclick="setChartPointsLimit(60)">60 точек</button>
@@ -153,7 +212,7 @@
         <div class="small">Максимум: <strong class="text-success" id="chart-stat-max">—</strong></div>
         <div class="small">Минимум: <strong class="text-danger" id="chart-stat-min">—</strong></div>
         <div class="small">Среднее: <strong class="text-warning" id="chart-stat-avg">—</strong></div>
-        <div class="small ms-auto text-muted">Частота опроса: <span class="text-light">каждые 3 сек</span></div>
+        <div class="small ms-auto text-muted">Режим: <span class="text-light" id="chart-poll-label">каждые 3 сек</span></div>
     </div>
 
     <!-- Холст Chart.js -->
@@ -233,8 +292,150 @@
         </table>
     </div>
   </div>
+
+  <!-- 3. Вкладка сканера зашумленности радиоэфира -->
+  <div class="tab-pane fade glass-card p-4" id="scanner-tab-pane" role="tabpanel" aria-labelledby="scanner-tab" tabindex="0">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
+        <div>
+            <h5 class="fw-bold text-white mb-1">Сканер зашумленности радиоэфира</h5>
+            <small class="text-muted">Анализ окружающих точек доступа, занятости каналов и радиопомех</small>
+        </div>
+        <button class="btn btn-cyan btn-sm rounded-pill px-4" id="btn-scan-air" onclick="performAirScan()">
+            <span id="scan-btn-spinner" class="spinner-border spinner-border-sm me-1 d-none" role="status"></span>
+            Сканировать эфир
+        </button>
+    </div>
+
+    <!-- Баннер рекомендации свободного канала -->
+    <div class="alert bg-body-tertiary border-info text-light d-flex align-items-center gap-3 p-3 rounded-3 mb-4" id="scan-recommendation-box">
+        <div class="fs-3 text-info">💡</div>
+        <div>
+            <div class="fw-bold text-white mb-1" id="scan-rec-title">Рекомендация по свободным каналам:</div>
+            <div class="small text-muted" id="scan-rec-desc">Нажмите кнопку «Сканировать эфир», чтобы проверить загруженность каналов вокруг вас.</div>
+        </div>
+    </div>
+
+    <!-- Загруженность каналов 2.4 ГГц и 5 ГГц -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-6">
+            <h6 class="text-white fw-bold mb-3 d-flex justify-content-between">
+                <span>Загруженность каналов 2.4 ГГц</span>
+                <small class="text-muted">Каналы 1 - 14</small>
+            </h6>
+            <div id="crowd-bars-24" class="p-3 rounded-3" style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-subtle);">
+                <div class="text-muted small text-center py-3">Ожидание запуска сканирования...</div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <h6 class="text-white fw-bold mb-3 d-flex justify-content-between">
+                <span>Загруженность каналов 5 ГГц</span>
+                <small class="text-muted">Каналы 36 - 165</small>
+            </h6>
+            <div id="crowd-bars-5" class="p-3 rounded-3" style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-subtle);">
+                <div class="text-muted small text-center py-3">Ожидание запуска сканирования...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблица обнаруженных соседних сетей -->
+    <h6 class="text-white fw-bold mb-2">Обнаруженные точки доступа вокруг (<span id="scan-total-count">0</span>):</h6>
+    <div class="table-responsive rounded-3 border border-secondary-subtle" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-modern align-middle m-0">
+            <thead class="sticky-top">
+                <tr>
+                    <th>Сеть (SSID)</th>
+                    <th>Точка (BSSID)</th>
+                    <th>Канал</th>
+                    <th>Диапазон</th>
+                    <th>Сигнал</th>
+                    <th>Тип сети</th>
+                    <th>Шифрование</th>
+                </tr>
+            </thead>
+            <tbody id="scan-table-body">
+                <tr><td colspan="7" class="text-center text-muted py-4">Нажмите «Сканировать эфир» для сбора данных</td></tr>
+            </tbody>
+        </table>
+    </div>
+  </div>
+
+  <!-- 4. Вкладка реестра точек доступа и детектора подмены (Rogue AP) -->
+  <div class="tab-pane fade glass-card p-4" id="security-tab-pane" role="tabpanel" aria-labelledby="security-tab" tabindex="0">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
+        <div>
+            <h5 class="fw-bold text-white mb-1">Сумматор точек доступа и детектор подмены (Rogue AP)</h5>
+            <small class="text-muted">Анализ всей собранной истории: инвентарь точек, фиксация смены BSSID и аномалий</small>
+        </div>
+        <button class="btn btn-sm btn-outline-info rounded-pill px-3" onclick="analyzeApRegistryAndSecurity()">
+            ↻ Пересчитать историю
+        </button>
+    </div>
+
+    <!-- Сводка безопасности -->
+    <div class="row row-cols-1 row-cols-md-3 g-3 mb-4">
+        <div class="col">
+            <div class="p-3 rounded-3" style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-subtle);">
+                <span class="text-muted small text-uppercase fw-bold">Уникальных сетей (SSID)</span>
+                <h3 class="mb-0 fw-bold text-white mt-1" id="sec-unique-ssids">—</h3>
+            </div>
+        </div>
+        <div class="col">
+            <div class="p-3 rounded-3" style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-subtle);">
+                <span class="text-muted small text-uppercase fw-bold">Всего точек (BSSID)</span>
+                <h3 class="mb-0 fw-bold text-info mt-1" id="sec-unique-bssids">—</h3>
+            </div>
+        </div>
+        <div class="col">
+            <div class="p-3 rounded-3" style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-subtle);">
+                <span class="text-muted small text-uppercase fw-bold">Смен точек / Инцидентов</span>
+                <h3 class="mb-0 fw-bold text-warning mt-1" id="sec-anomaly-count">—</h3>
+            </div>
+        </div>
+    </div>
+
+    <!-- Реестр известных сетей и сумматор BSSID -->
+    <h6 class="text-white fw-bold mb-2">Реестр сетей и используемые точки (BSSID):</h6>
+    <div class="table-responsive rounded-3 border border-secondary-subtle mb-4">
+        <table class="table table-modern align-middle m-0">
+            <thead>
+                <tr>
+                    <th>Сеть (SSID)</th>
+                    <th>Зафиксированные точки (BSSID)</th>
+                    <th>Каналы</th>
+                    <th>Замеров</th>
+                    <th>Период активности</th>
+                    <th>Средний сигнал</th>
+                    <th>Статус сети</th>
+                </tr>
+            </thead>
+            <tbody id="security-registry-table-body">
+                <tr><td colspan="7" class="text-center text-muted py-4">Сбор данных из истории...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Хронология инцидентов и переключений точек -->
+    <h6 class="text-white fw-bold mb-2">Хронология смены точек доступа (Роуминг / Возможная подмена):</h6>
+    <div class="table-responsive rounded-3 border border-secondary-subtle" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-modern align-middle m-0">
+            <thead class="sticky-top">
+                <tr>
+                    <th>Время инцидента</th>
+                    <th>Сеть (SSID)</th>
+                    <th>Предыдущая точка (BSSID)</th>
+                    <th>Новая точка (BSSID)</th>
+                    <th>Тип события</th>
+                </tr>
+            </thead>
+            <tbody id="security-anomalies-table-body">
+                <tr><td colspan="5" class="text-center text-muted py-4">Событий смены точек доступа не зафиксировано.</td></tr>
+            </tbody>
+        </table>
+    </div>
+  </div>
   
-  <!-- 3. Вкладка настроек параметров утилиты -->
+  <!-- 5. Вкладка настроек параметров утилиты -->
   <div class="tab-pane fade glass-card p-4" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
     <div class="mb-4">
         <h5 class="fw-bold text-white mb-1">Параметры демона Wi-Fi регистратора</h5>

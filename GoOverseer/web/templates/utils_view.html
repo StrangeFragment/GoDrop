@@ -70,15 +70,22 @@
         </div>
     </div>
 
+    <!-- Фиксированный приклеенный подвал -->
+    <footer class="footer-fixed">
+        <div class="container">
+            <span>Created by StrangeFragment 2©26</span>
+        </div>
+    </footer>
+
     <!-- Контейнер для всплывающих уведомлений (Toasts) -->
     <div class="toast-container toast-container-custom" id="toastContainer"></div>
 
     <!-- Локальный Bootstrap Bundle -->
     <script src="/static/js/bootstrap.bundle.min.js"></script>
-
+    
     <!-- КРИТИЧЕСКИЙ ФИКС: Подгружаем Chart.js ДО скрипта модуля аналитики -->
     <script src="/static/js/chart.min.js"></script>
-
+    
     <!-- Подгружаем скрипт логики со склада -->
     <script src="/static/js/utils/{{.CustomJS}}"></script>
 

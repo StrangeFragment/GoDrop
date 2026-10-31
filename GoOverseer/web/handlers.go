@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -426,10 +427,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 			return
 		}
 
-		// Передаем фактический размер лог-файла в заголовке для интерфейса
 		w.Header().Set("X-Log-Size-Bytes", fmt.Sprintf("%d", fileInfo.Size()))
 
-		// Если лог-файл большой, читаем только хвост (последние 256 КБ)
 		var fileBytes []byte
 		if fileInfo.Size() > 256*1024 {
 			f, err := os.Open(logFilePath)
@@ -460,7 +459,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	// Очистка логов модуля по требованию пользователя
+	// Очистка логов модуля
 	mux.HandleFunc("POST /api/utils/logs/clear", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -490,6 +489,41 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("Logs cleared successfully"))
+	})
+
+	// Сканирование эфира и соседних сетей Wi-Fi
+	mux.HandleFunc("GET /api/utils/wifi/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		res, err := scanSurroundingWifi()
+		if err != nil {
+			http.Error(w, "Ошибка сканирования сетей: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		data, _ := json.Marshal(res)
+		_, _ = w.Write(data)
+	})
+
+	// Проверка задержки до шлюза/DNS
+	mux.HandleFunc("GET /api/utils/wifi/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		host := r.URL.Query().Get("host")
+		ms, alive := checkPingLatency(host)
+		status := "excellent"
+		if !alive {
+			status = "failed"
+		} else if ms > 150 {
+			status = "high"
+		} else if ms > 50 {
+			status = "moderate"
+		}
+		resp := map[string]interface{}{
+			"host":       host,
+			"alive":      alive,
+			"latency_ms": ms,
+			"status":     status,
+		}
+		data, _ := json.Marshal(resp)
+		_, _ = w.Write(data)
 	})
 
 	// Роут для скриптов аналитики (сначала с диска, если нет - из EmbeddedFS)
@@ -523,4 +557,182 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
 	})
 
 	return mux
+}
+
+// Структура для результатов сканирования соседних сетей Wi-Fi
+type ScannedBSSID struct {
+	BSSID     string `json:"bssid"`
+	Signal    int    `json:"signal"`
+	SignalDbm int    `json:"signal_dbm"`
+	Radio     string `json:"radio"`
+	Channel   int    `json:"channel"`
+	Band      string `json:"band"`
+}
+
+type ScannedNetwork struct {
+	SSID    string         `json:"ssid"`
+	Auth    string         `json:"auth"`
+	Encrypt string         `json:"encrypt"`
+	BSSIDs  []ScannedBSSID `json:"bssids"`
+}
+
+type ScanResult struct {
+	Networks           []ScannedNetwork `json:"networks"`
+	ChannelCrowd24     map[int]int      `json:"channel_crowd_24"`
+	ChannelCrowd5      map[int]int      `json:"channel_crowd_5"`
+	RecommendedChannel int              `json:"recommended_channel"`
+	TotalBSSIDs        int              `json:"total_bssids"`
+	ScanTime           string           `json:"scan_time"`
+}
+
+// Парсер вывода netsh wlan show networks mode=bssid
+func scanSurroundingWifi() (ScanResult, error) {
+	cmd := exec.Command("netsh", "wlan", "show", "networks", "mode=bssid")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	out, err := cmd.Output()
+	res := ScanResult{
+		Networks:       []ScannedNetwork{},
+		ChannelCrowd24: make(map[int]int),
+		ChannelCrowd5:  make(map[int]int),
+		ScanTime:       time.Now().Format("15:04:05"),
+	}
+
+	if err != nil {
+		return res, err
+	}
+
+	lines := strings.Split(string(out), "\n")
+	var currentNet *ScannedNetwork
+	var currentBSSID *ScannedBSSID
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		k := strings.TrimSpace(parts[0])
+		v := strings.TrimSpace(parts[1])
+
+		if strings.HasPrefix(k, "SSID ") {
+			if currentNet != nil {
+				if currentBSSID != nil {
+					currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
+					currentBSSID = nil
+				}
+				res.Networks = append(res.Networks, *currentNet)
+			}
+			currentNet = &ScannedNetwork{
+				SSID:   v,
+				BSSIDs: []ScannedBSSID{},
+			}
+			continue
+		}
+
+		if currentNet == nil {
+			continue
+		}
+
+		switch {
+		case strings.Contains(k, "Проверка подлинности") || strings.Contains(k, "Authentication"):
+			currentNet.Auth = v
+		case strings.Contains(k, "Шифрование") || strings.Contains(k, "Encryption"):
+			currentNet.Encrypt = v
+		case strings.HasPrefix(k, "BSSID "):
+			if currentBSSID != nil {
+				currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
+			}
+			currentBSSID = &ScannedBSSID{BSSID: v}
+		case strings.Contains(k, "Сигнал") || strings.Contains(k, "Signal"):
+			if currentBSSID != nil {
+				val := strings.TrimSuffix(v, "%")
+				pct, _ := strconv.Atoi(val)
+				currentBSSID.Signal = pct
+				currentBSSID.SignalDbm = (pct / 2) - 100
+			}
+		case strings.Contains(k, "Тип радиосети") || strings.Contains(k, "Radio type"):
+			if currentBSSID != nil {
+				currentBSSID.Radio = v
+			}
+		case strings.Contains(k, "Канал") || strings.Contains(k, "Channel"):
+			if currentBSSID != nil {
+				ch, _ := strconv.Atoi(v)
+				currentBSSID.Channel = ch
+				if ch >= 1 && ch <= 14 {
+					currentBSSID.Band = "2.4 GHz"
+					res.ChannelCrowd24[ch]++
+				} else if ch >= 32 {
+					currentBSSID.Band = "5 GHz"
+					res.ChannelCrowd5[ch]++
+				}
+				res.TotalBSSIDs++
+			}
+		}
+	}
+
+	if currentNet != nil {
+		if currentBSSID != nil {
+			currentNet.BSSIDs = append(currentNet.BSSIDs, *currentBSSID)
+		}
+		res.Networks = append(res.Networks, *currentNet)
+	}
+
+	// Выбираем наименее загруженный канал из классической тройки 2.4 ГГц (1, 6, 11)
+	best24 := 1
+	minCrowd := 999
+	for _, ch := range []int{1, 6, 11} {
+		crowd := res.ChannelCrowd24[ch]
+		if crowd < minCrowd {
+			minCrowd = crowd
+			best24 = ch
+		}
+	}
+	res.RecommendedChannel = best24
+
+	return res, nil
+}
+
+// Проверка задержки до шлюза/DNS
+func checkPingLatency(host string) (int, bool) {
+	if host == "" {
+		host = "8.8.8.8"
+	}
+	cmd := exec.Command("ping", "-n", "1", "-w", "1000", host)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+
+	outStr := string(out)
+	for _, token := range []string{"время=", "time=", "время<", "time<"} {
+		idx := strings.Index(outStr, token)
+		if idx != -1 {
+			sub := outStr[idx+len(token):]
+			numStr := ""
+			for _, r := range sub {
+				if r >= '0' && r <= '9' {
+					numStr += string(r)
+				} else {
+					break
+				}
+			}
+			if numStr != "" {
+				ms, err := strconv.Atoi(numStr)
+				if err == nil {
+					return ms, true
+				}
+			} else if strings.HasPrefix(sub, "1") || token == "время<" || token == "time<" {
+				return 1, true
+			}
+		}
+	}
+
+	return 0, true
 }
