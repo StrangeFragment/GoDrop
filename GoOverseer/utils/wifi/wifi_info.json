@@ -2,10 +2,10 @@
   "id": "WIFI",
   "name": "Мониторинг Wi-Fi",
   "description": "Следит за качеством сигнала, SSID, скоростью линка и используемым каналом.",
-  "exe_name": "wifi_loger.exe",
+  "exe_name": "wifi_daemon.exe",
   "log_file": "wifi_records.jsonl",
   "has_charts": true,
-  "view_type": "charts", 
+  "view_type": "charts",
   "ui_schema": [
     {
       "key": "interval_sec",

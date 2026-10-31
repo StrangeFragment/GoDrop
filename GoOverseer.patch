@@ -112,28 +112,30 @@ index 969e80f..f37f390 100644
  	// Системные прерывания (Ctrl+C)
 diff --git a/utils/embed.go b/utils/embed.go
 new file mode 100644
-index 0000000..2319f6b
+index 0000000..f68bc28
 --- /dev/null
 +++ b/utils/embed.go
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,10 @@
 +package utils
 +
 +import "embed"
 +
-+// EmbeddedFS содержит встроенные ресурсы модулей демонов:
-+// конфигурационные схемы (*.json), шаблоны аналитики (*.html),
-+// скрипты визуализации (*.js) и исходный код демонов (*.go).
-+// Исполняемые файлы (*.exe) исключены из эмбеддинга, чтобы предотвратить
-+// ложные срабатывания Windows Defender и блокировки компиляции.
++// EmbeddedFS содержит встроенные ресурсы всех модулей:
++// JSON-схемы настроек, HTML-шаблоны, JS-скрипты аналитики,
++// исходный код демонов и скомпилированные бинарники (*.exe) при их наличии.
 +//
-+//go:embed sys/* usb/* wifi/*.json wifi/*.html wifi/*.js wifi/*.go
++//go:embed sys/* usb/* wifi/*
 +var EmbeddedFS embed.FS
 diff --git a/utils/wifi/wifi_info.json b/utils/wifi/wifi_info.json
-index 6173190..cb24c9d 100644
+index 6173190..a2e108d 100644
 --- a/utils/wifi/wifi_info.json
 +++ b/utils/wifi/wifi_info.json
-@@ -5,7 +5,7 @@
-   "exe_name": "wifi_loger.exe",
+@@ -2,10 +2,10 @@
+   "id": "WIFI",
+   "name": "Мониторинг Wi-Fi",
+   "description": "Следит за качеством сигнала, SSID, скоростью линка и используемым каналом.",
+-  "exe_name": "wifi_loger.exe",
++  "exe_name": "wifi_daemon.exe",
    "log_file": "wifi_records.jsonl",
    "has_charts": true,
 -  "view_type": "charts", 
