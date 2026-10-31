@@ -1,5 +1,7 @@
 // ==========================================================================
-// GoOverseer Wi-Fi Telemetry & Analytics Logic
+// GoOverseer Wi-Fi Telemetry & Analytics Logic (Оптимизированная версия)
+// Устранены утечки памяти: пакетный DOM-рендеринг, отключение RAF в Chart.js,
+// ограничение видимых строк таблицы и пауза при неактивной вкладке.
 // ==========================================================================
 
 let wifiChartInstance = null;
@@ -12,14 +14,22 @@ let searchQuery = '';
 
 document.addEventListener("DOMContentLoaded", () => {
     initWifiChart();
-    refreshWifiAnalytics();
+    refreshWifiAnalytics(true);
 
     // Периодический опрос каждые 3 секунды
     setInterval(() => {
-        if (!isPaused) {
-            refreshWifiAnalytics();
+        // ОПТИМИЗАЦИЯ: Если вкладка браузера свернута или не активна, не тратим память и CPU
+        if (!isPaused && !document.hidden) {
+            refreshWifiAnalytics(false);
         }
     }, 3000);
+
+    // При возвращении на вкладку сразу обновляем данные
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && !isPaused) {
+            refreshWifiAnalytics(true);
+        }
+    });
 });
 
 // Инициализация Chart.js графика радиоэфира
@@ -28,8 +38,13 @@ function initWifiChart() {
     if (!ctx) return;
 
     if (typeof Chart === 'undefined') {
-        console.warn("Chart.js библиотека еще не загружена или не найдена");
         return;
+    }
+
+    // Если экземпляр уже существует, уничтожаем старый во избежание утечки canvas context
+    if (wifiChartInstance) {
+        wifiChartInstance.destroy();
+        wifiChartInstance = null;
     }
 
     const canvasCtx = ctx.getContext('2d');
@@ -59,14 +74,15 @@ function initWifiChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: {
-                duration: 400
-            },
+            // ОПТИМИЗАЦИЯ: Отключаем ресурсоемкие анимации для потоковой телеметрии
+            animation: false,
+            normalized: true, // Chart.js быстрая обработка массивов
             plugins: {
                 legend: {
                     display: false
                 },
                 tooltip: {
+                    animation: false,
                     backgroundColor: 'rgba(15, 23, 42, 0.95)',
                     titleColor: '#f8fafc',
                     bodyColor: '#38bdf8',
@@ -130,7 +146,7 @@ function initWifiChart() {
     });
 }
 
-function refreshWifiAnalytics() {
+function refreshWifiAnalytics(forceRender = false) {
     const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
 
     // Подгрузка полей конфигурации при первом открытии
@@ -173,12 +189,20 @@ function refreshWifiAnalytics() {
         .then(data => {
             if (Array.isArray(data)) {
                 cachedLogData = data;
+
+                // ОПТИМИЗАЦИЯ: Проверяем, появились ли вообще новые данные
+                if (!forceRender && data.length > 0) {
+                    const latestTime = data[data.length - 1].time;
+                    if (latestTime === lastRenderedTimestamp) {
+                        return; // Новых записей нет — не нагружаем процессор и сборщик мусора
+                    }
+                }
+
                 renderAnalytics(data);
             }
         })
         .catch(err => {
             console.error("Ошибка получения логов:", err);
-            renderAnalytics(cachedLogData);
         });
 }
 
@@ -186,7 +210,6 @@ function refreshWifiAnalytics() {
 function renderAnalytics(data) {
     const tableBody = document.getElementById("wifi-log-table-body");
 
-    // Если график еще не был проинициализирован (например, Chart.js догрузился позже)
     if (!wifiChartInstance && typeof Chart !== 'undefined') {
         initWifiChart();
     }
@@ -215,7 +238,6 @@ function renderAnalytics(data) {
         if (elInterface) elInterface.innerText = latest.interface || "Wi-Fi";
         if (elStandard) elStandard.innerText = `Стандарт: ${latest.standard || '—'}`;
 
-        // Определение диапазона частот
         if (elBand) {
             if (latest.channel >= 1 && latest.channel <= 14) {
                 elBand.innerText = "2.4 ГГц";
@@ -231,21 +253,18 @@ function renderAnalytics(data) {
             }
         }
 
-        // Скорости соединения
         if (elSpeeds) {
             const rx = latest.rx_rate || 0;
             const tx = latest.tx_rate || 0;
             elSpeeds.innerText = `Линк: ⬇ ${rx} Мб / ⬆ ${tx} Мб`;
         }
 
-        // Сигнал и индикатор качества
         const sig = latest.signal ?? -100;
         if (elSignal) {
             elSignal.innerText = `${sig} dBm`;
             elSignal.className = "mb-1 fw-bold text-white";
         }
 
-        // Качество и 4 полоски
         let qualityPercent = Math.min(100, Math.max(0, (sig + 100) * 2));
         let qualityText = "Отличное";
         let barLevel = "signal-level-4";
@@ -296,7 +315,8 @@ function renderAnalytics(data) {
         let maxSig = -120;
         let sumSig = 0;
 
-        chartData.forEach(entry => {
+        for (let i = 0; i < chartData.length; i++) {
+            const entry = chartData[i];
             let label = "—";
             if (entry.time) {
                 label = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
@@ -307,13 +327,14 @@ function renderAnalytics(data) {
             if (entry.signal > maxSig) maxSig = entry.signal;
             if (minSig === 0 || entry.signal < minSig) minSig = entry.signal;
             sumSig += entry.signal;
-        });
+        }
 
         wifiChartInstance.data.labels = labels;
         wifiChartInstance.data.datasets[0].data = points;
-        wifiChartInstance.update();
 
-        // Обновление полосы статистики
+        // ОПТИМИЗАЦИЯ: 'none' запрещает запуск цикла requestAnimationFrame
+        wifiChartInstance.update('none');
+
         const latestSig = points[points.length - 1];
         const avgSig = Math.round(sumSig / points.length);
 
@@ -336,8 +357,8 @@ function renderAnalytics(data) {
         return;
     }
 
-    // Применяем фильтры и поиск
-    let filteredData = [...data];
+    // Фильтрация
+    let filteredData = data;
 
     if (currentLogFilter === 'connected') {
         filteredData = filteredData.filter(d => d.ssid && d.ssid !== "Disconnected" && d.state !== "отключено");
@@ -358,16 +379,21 @@ function renderAnalytics(data) {
     const counterEl = document.getElementById("records-counter");
     if (counterEl) counterEl.innerText = filteredData.length;
 
-    tableBody.innerHTML = "";
-
     if (filteredData.length === 0) {
         tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">События по заданному фильтру не найдены.</td></tr>`;
         return;
     }
 
-    // Отрисовываем строки таблицы (в обратном порядке - свежие сверху)
-    const reversedData = [...filteredData].reverse();
-    reversedData.forEach((entry, idx) => {
+    // ОПТИМИЗАЦИЯ: Отображаем в DOM не более 60 самых свежих строк (остальное доступно в экспорте)
+    // Это исключает перегрузку браузера десятками тысяч DOM-узлов
+    const displayRows = filteredData.slice(-60).reverse();
+
+    // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ ПАМЯТИ: Собираем массив строк в одну операцию
+    // Запрещено делать tableBody.innerHTML += в цикле!
+    const htmlChunks = [];
+
+    for (let i = 0; i < displayRows.length; i++) {
+        const entry = displayRows[i];
         const isDisc = !entry.ssid || entry.ssid === "Disconnected" || entry.state === "отключено";
 
         let statusBadge = `<span class="badge badge-custom badge-connected">Подключено</span>`;
@@ -384,7 +410,7 @@ function renderAnalytics(data) {
             ? `<span class="badge bg-secondary-subtle text-light">${entry.channel}</span>`
             : `<span class="text-muted">—</span>`;
 
-        tableBody.innerHTML += `
+        htmlChunks.push(`
             <tr>
                 <td><code>${entry.time || '—'}</code></td>
                 <td><strong class="text-white">${entry.ssid || 'Disconnected'}</strong></td>
@@ -395,8 +421,11 @@ function renderAnalytics(data) {
                 <td><strong class="${signalClass}">${entry.signal ?? -100} dBm</strong></td>
                 <td>${statusBadge}</td>
             </tr>
-        `;
-    });
+        `);
+    }
+
+    // Ровно 1 запись в DOM вместо сотен вызовов парсера
+    tableBody.innerHTML = htmlChunks.join("");
 
     lastRenderedTimestamp = data[data.length - 1].time;
 }
@@ -405,7 +434,6 @@ function renderAnalytics(data) {
 function setChartPointsLimit(limit) {
     currentPointsLimit = limit;
 
-    // Обновляем активный класс на кнопках
     document.querySelectorAll('[aria-label="Диапазон точек"] button').forEach(btn => {
         btn.classList.remove('active');
     });
@@ -461,9 +489,10 @@ function exportLogsToCSV() {
     }
 
     let csv = "Time,SSID,BSSID,Channel,Standard,RxRate,TxRate,Signal,State\n";
-    cachedLogData.forEach(e => {
+    for (let i = 0; i < cachedLogData.length; i++) {
+        const e = cachedLogData[i];
         csv += `"${e.time}","${e.ssid}","${e.bssid}",${e.channel},"${e.standard}",${e.rx_rate},${e.tx_rate},${e.signal},"${e.state}"\n`;
-    });
+    }
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -473,6 +502,7 @@ function exportLogsToCSV() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Экспорт истории в JSON
@@ -490,6 +520,7 @@ function exportLogsToJSON() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Сохранение настроек утилиты
@@ -511,7 +542,7 @@ function saveWifiSettings() {
             } else {
                 alert("Конфигурация успешно сохранена!");
             }
-            refreshWifiAnalytics();
+            refreshWifiAnalytics(true);
         } else {
             if (typeof showToast === 'function') {
                 showToast("Не удалось сохранить конфигурацию", 'danger');
