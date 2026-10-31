@@ -121,7 +121,7 @@
 
 <!-- Содержимое вкладок -->
 <div class="tab-content" id="wifiTabContent">
-
+  
   <!-- 1. Вкладка интерактивного графика сигнала -->
   <div class="tab-pane fade show active glass-card p-4" id="chart-tab-pane" role="tabpanel" aria-labelledby="chart-tab" tabindex="0">
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
@@ -129,7 +129,7 @@
             <h5 class="fw-bold text-white mb-1">Уровень сигнала Wi-Fi (dBm) в реальном времени</h5>
             <small class="text-muted">Непрерывный мониторинг мощности радиосигнала и затуханий</small>
         </div>
-
+        
         <!-- Панель управления графиком -->
         <div class="d-flex align-items-center flex-wrap gap-2">
             <div class="btn-group btn-group-sm" role="group" aria-label="Диапазон точек">
@@ -141,7 +141,7 @@
             <button id="btn-toggle-pause" class="btn btn-sm btn-outline-secondary" onclick="togglePauseLiveStream()">
                 <span id="pause-icon">⏸ Пауза</span>
             </button>
-            <button class="btn btn-sm btn-outline-info" onclick="refreshWifiAnalytics()">
+            <button class="btn btn-sm btn-outline-info" onclick="refreshWifiAnalytics(true)">
                 ↻ Обновить
             </button>
         </div>
@@ -153,7 +153,7 @@
         <div class="small">Максимум: <strong class="text-success" id="chart-stat-max">—</strong></div>
         <div class="small">Минимум: <strong class="text-danger" id="chart-stat-min">—</strong></div>
         <div class="small">Среднее: <strong class="text-warning" id="chart-stat-avg">—</strong></div>
-        <div class="small ms-auto text-muted">Частота обновления: <span class="text-light">каждые 3 сек</span></div>
+        <div class="small ms-auto text-muted">Частота опроса: <span class="text-light">каждые 3 сек</span></div>
     </div>
 
     <!-- Холст Chart.js -->
@@ -169,14 +169,18 @@
             <h5 class="fw-bold text-white mb-1">История радиоэфира и подключений</h5>
             <small class="text-muted">Журнал сессий и фиксация изменений параметров сети</small>
         </div>
-
-        <!-- Кнопки экспорта -->
-        <div class="d-flex align-items-center gap-2">
+        
+        <!-- Кнопки управления журналом -->
+        <div class="d-flex align-items-center flex-wrap gap-2">
+            <span class="small text-muted me-2">Размер файла: <strong id="log-size-badge" class="text-info">0 КБ</strong></span>
             <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToCSV()">
                 Экспорт CSV
             </button>
             <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToJSON()">
                 Экспорт JSON
+            </button>
+            <button class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="clearWifiLogs()">
+                Очистить журнал
             </button>
         </div>
     </div>
@@ -229,12 +233,12 @@
         </table>
     </div>
   </div>
-
+  
   <!-- 3. Вкладка настроек параметров утилиты -->
   <div class="tab-pane fade glass-card p-4" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
     <div class="mb-4">
         <h5 class="fw-bold text-white mb-1">Параметры демона Wi-Fi регистратора</h5>
-        <small class="text-muted">Изменение интервала поллинга и порогов фиксации изменений без перезагрузки системы</small>
+        <small class="text-muted">Интервалы поллинга, пороги и максимальный размер файла логов без перезагрузки системы</small>
     </div>
 
     <div id="wifi-custom-config-fields" class="row g-3">

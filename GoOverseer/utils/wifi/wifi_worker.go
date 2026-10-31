@@ -34,6 +34,20 @@ type WifiData struct {
 type Config struct {
 	IntervalSec      string `json:"interval_sec"`
 	MinSignalDropDbm string `json:"min_signal_drop_dbm"`
+	MaxLogMb         string `json:"max_log_mb"`
+}
+
+// Ротация лог-файла при превышении максимального размера
+func checkAndRotateLog(filePath string, maxBytes int64) {
+	fi, err := os.Stat(filePath)
+	if err != nil || fi.Size() < maxBytes {
+		return
+	}
+
+	// Храним не более одного архивного файла .old
+	oldPath := filePath + ".old"
+	_ = os.Remove(oldPath)
+	_ = os.Rename(filePath, oldPath)
 }
 
 func main() {
@@ -44,8 +58,11 @@ func main() {
 	}
 	workDir := filepath.Dir(exePath)
 
-	// Настраиваем системный логгер демона для отладки
-	logFile, _ := os.OpenFile(filepath.Join(workDir, "wifi_daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	daemonLogPath := filepath.Join(workDir, "wifi_daemon.log")
+	// Ограничиваем отладочный лог демона до 1 МБ
+	checkAndRotateLog(daemonLogPath, 1*1024*1024)
+
+	logFile, _ := os.OpenFile(daemonLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logFile != nil {
 		log.SetOutput(logFile)
 		defer logFile.Close()
@@ -63,6 +80,7 @@ func main() {
 		// 2. Читаем актуальные настройки из config.json
 		interval := 5
 		minDropDbm := 0
+		maxLogMb := 5 // дефолтное ограничение размера: 5 МБ
 
 		cfgData, err := os.ReadFile(configPath)
 		if err == nil {
@@ -74,15 +92,16 @@ func main() {
 				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val > 0 {
 					minDropDbm = val
 				}
+				if val, err := strconv.Atoi(cfg.MaxLogMb); err == nil && val > 0 {
+					maxLogMb = val
+				}
 			}
 		}
 
 		// 3. Считываем данные Wi-Fi адаптера через netsh
 		currentData := parseWindowsWifi()
 
-		// 4. Проверяем условие логирования:
-		// Если порог minDropDbm задан, пишем при изменении сигнала >= порога,
-		// при смене сети/состояния или принудительно раз в 30 секунд (heartbeat для живого графика)
+		// 4. Проверяем условие логирования
 		shouldWrite := true
 		if minDropDbm > 0 && lastSignal != -999 {
 			diff := int(math.Abs(float64(currentData.Signal - lastSignal)))
@@ -95,6 +114,10 @@ func main() {
 		}
 
 		if shouldWrite {
+			// Проверяем лимит размера лога перед записью
+			maxBytes := int64(maxLogMb) * 1024 * 1024
+			checkAndRotateLog(recordsPath, maxBytes)
+
 			jsonData, err := json.Marshal(currentData)
 			if err == nil {
 				f, err := os.OpenFile(recordsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)

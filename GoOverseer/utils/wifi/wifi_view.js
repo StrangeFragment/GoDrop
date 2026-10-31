@@ -1,7 +1,5 @@
 // ==========================================================================
-// GoOverseer Wi-Fi Telemetry & Analytics Logic (Оптимизированная версия)
-// Устранены утечки памяти: пакетный DOM-рендеринг, отключение RAF в Chart.js,
-// ограничение видимых строк таблицы и пауза при неактивной вкладке.
+// GoOverseer Wi-Fi Telemetry & Analytics Logic
 // ==========================================================================
 
 let wifiChartInstance = null;
@@ -18,7 +16,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Периодический опрос каждые 3 секунды
     setInterval(() => {
-        // ОПТИМИЗАЦИЯ: Если вкладка браузера свернута или не активна, не тратим память и CPU
         if (!isPaused && !document.hidden) {
             refreshWifiAnalytics(false);
         }
@@ -41,7 +38,6 @@ function initWifiChart() {
         return;
     }
 
-    // Если экземпляр уже существует, уничтожаем старый во избежание утечки canvas context
     if (wifiChartInstance) {
         wifiChartInstance.destroy();
         wifiChartInstance = null;
@@ -74,9 +70,8 @@ function initWifiChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            // ОПТИМИЗАЦИЯ: Отключаем ресурсоемкие анимации для потоковой телеметрии
             animation: false,
-            normalized: true, // Chart.js быстрая обработка массивов
+            normalized: true,
             plugins: {
                 legend: {
                     display: false
@@ -146,6 +141,13 @@ function initWifiChart() {
     });
 }
 
+function formatBytes(bytes) {
+    if (!bytes || isNaN(bytes) || bytes <= 0) return "0 КБ";
+    if (bytes < 1024) return bytes + " Б";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " КБ";
+    return (bytes / (1024 * 1024)).toFixed(2) + " МБ";
+}
+
 function refreshWifiAnalytics(forceRender = false) {
     const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
 
@@ -153,21 +155,29 @@ function refreshWifiAnalytics(forceRender = false) {
     const fieldsContainer = document.getElementById("wifi-custom-config-fields");
     if (fieldsContainer && fieldsContainer.children.length === 0) {
         fieldsContainer.innerHTML = `
-            <div class="col-md-6">
+            <div class="col-md-4">
                 <label class="form-label text-light small fw-bold">Интервал опроса адаптера (сек)</label>
                 <div class="input-group input-group-sm">
                     <input type="number" min="1" max="300" class="form-control bg-dark text-light border-secondary" id="cfg_live_interval_sec" value="5">
                     <span class="input-group-text bg-dark text-muted border-secondary">сек</span>
                 </div>
-                <div class="form-text text-muted small">Частота считывания данных netsh в фоновом режиме.</div>
+                <div class="form-text text-muted small">Частота считывания netsh в фоновом режиме.</div>
             </div>
-            <div class="col-md-6">
-                <label class="form-label text-light small fw-bold">Порог фиксации изменения сигнала (dBm)</label>
+            <div class="col-md-4">
+                <label class="form-label text-light small fw-bold">Порог фиксации сигнала (dBm)</label>
                 <div class="input-group input-group-sm">
                     <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
                     <span class="input-group-text bg-dark text-muted border-secondary">dBm</span>
                 </div>
-                <div class="form-text text-muted small">Минимальное колебание сигнала для внеочередной записи.</div>
+                <div class="form-text text-muted small">Минимальное колебание для внеочередной записи.</div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label text-light small fw-bold">Максимальный размер лога (МБ)</label>
+                <div class="input-group input-group-sm">
+                    <input type="number" min="1" max="100" class="form-control bg-dark text-light border-secondary" id="cfg_live_max_log_mb" value="5">
+                    <span class="input-group-text bg-dark text-muted border-secondary">МБ</span>
+                </div>
+                <div class="form-text text-muted small">При превышении создается резервный .old архив.</div>
             </div>
         `;
 
@@ -178,6 +188,7 @@ function refreshWifiAnalytics(forceRender = false) {
                 if (wifi && wifi.settings) {
                     if (wifi.settings.interval_sec) document.getElementById("cfg_live_interval_sec").value = wifi.settings.interval_sec;
                     if (wifi.settings.min_signal_drop_dbm) document.getElementById("cfg_live_min_signal_drop_dbm").value = wifi.settings.min_signal_drop_dbm;
+                    if (wifi.settings.max_log_mb) document.getElementById("cfg_live_max_log_mb").value = wifi.settings.max_log_mb;
                 }
             })
             .catch(() => {});
@@ -185,16 +196,24 @@ function refreshWifiAnalytics(forceRender = false) {
 
     // Запрос логов телеметрии
     fetch(`/api/utils/logs?id=${encodeURIComponent(rawId.toUpperCase())}`)
-        .then(res => res.json())
+        .then(res => {
+            const sizeHeader = res.headers.get("X-Log-Size-Bytes");
+            if (sizeHeader) {
+                const sizeBadge = document.getElementById("log-size-badge");
+                if (sizeBadge) {
+                    sizeBadge.innerText = formatBytes(parseInt(sizeHeader, 10));
+                }
+            }
+            return res.json();
+        })
         .then(data => {
             if (Array.isArray(data)) {
                 cachedLogData = data;
 
-                // ОПТИМИЗАЦИЯ: Проверяем, появились ли вообще новые данные
                 if (!forceRender && data.length > 0) {
                     const latestTime = data[data.length - 1].time;
                     if (latestTime === lastRenderedTimestamp) {
-                        return; // Новых записей нет — не нагружаем процессор и сборщик мусора
+                        return;
                     }
                 }
 
@@ -331,8 +350,6 @@ function renderAnalytics(data) {
 
         wifiChartInstance.data.labels = labels;
         wifiChartInstance.data.datasets[0].data = points;
-
-        // ОПТИМИЗАЦИЯ: 'none' запрещает запуск цикла requestAnimationFrame
         wifiChartInstance.update('none');
 
         const latestSig = points[points.length - 1];
@@ -357,7 +374,6 @@ function renderAnalytics(data) {
         return;
     }
 
-    // Фильтрация
     let filteredData = data;
 
     if (currentLogFilter === 'connected') {
@@ -384,12 +400,7 @@ function renderAnalytics(data) {
         return;
     }
 
-    // ОПТИМИЗАЦИЯ: Отображаем в DOM не более 60 самых свежих строк (остальное доступно в экспорте)
-    // Это исключает перегрузку браузера десятками тысяч DOM-узлов
     const displayRows = filteredData.slice(-60).reverse();
-
-    // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ ПАМЯТИ: Собираем массив строк в одну операцию
-    // Запрещено делать tableBody.innerHTML += в цикле!
     const htmlChunks = [];
 
     for (let i = 0; i < displayRows.length; i++) {
@@ -424,10 +435,40 @@ function renderAnalytics(data) {
         `);
     }
 
-    // Ровно 1 запись в DOM вместо сотен вызовов парсера
     tableBody.innerHTML = htmlChunks.join("");
 
     lastRenderedTimestamp = data[data.length - 1].time;
+}
+
+// Очистка логов модуля
+function clearWifiLogs() {
+    const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
+    if (confirm("Вы уверены, что хотите полностью очистить журнал телеметрии Wi-Fi? Это действие необратимо.")) {
+        fetch(`/api/utils/logs/clear?id=${encodeURIComponent(rawId.toUpperCase())}`, { method: 'POST' })
+            .then(res => {
+                if (res.ok) {
+                    if (typeof showToast === 'function') {
+                        showToast("Журнал телеметрии успешно очищен!", 'info');
+                    } else {
+                        alert("Журнал успешно очищен!");
+                    }
+                    cachedLogData = [];
+                    lastRenderedTimestamp = "";
+                    renderAnalytics([]);
+                    const sizeBadge = document.getElementById("log-size-badge");
+                    if (sizeBadge) sizeBadge.innerText = "0 КБ";
+                } else {
+                    if (typeof showToast === 'function') {
+                        showToast("Не удалось очистить журнал.", 'danger');
+                    } else {
+                        alert("Ошибка очистки журнала.");
+                    }
+                }
+            })
+            .catch(err => {
+                alert("Ошибка сети: " + err);
+            });
+    }
 }
 
 // Управление отображением графика
@@ -528,7 +569,8 @@ function saveWifiSettings() {
     const id = new URLSearchParams(window.location.search).get('id') || "WIFI";
     const newSettings = {
         interval_sec: document.getElementById("cfg_live_interval_sec") ? document.getElementById("cfg_live_interval_sec").value : "5",
-        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "5"
+        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "5",
+        max_log_mb: document.getElementById("cfg_live_max_log_mb") ? document.getElementById("cfg_live_max_log_mb").value : "5"
     };
 
     fetch(`/api/utils/save?id=${encodeURIComponent(id)}`, {

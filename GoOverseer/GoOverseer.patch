@@ -126,11 +126,37 @@ index 0000000..450bd54
 +//
 +//go:embed sys/* usb/* wifi/*
 +var EmbeddedFS embed.FS
+diff --git a/utils/wifi/wifi_info.json b/utils/wifi/wifi_info.json
+index 6173190..cb24c9d 100644
+--- a/utils/wifi/wifi_info.json
++++ b/utils/wifi/wifi_info.json
+@@ -5,7 +5,7 @@
+   "exe_name": "wifi_loger.exe",
+   "log_file": "wifi_records.jsonl",
+   "has_charts": true,
+-  "view_type": "charts", 
++  "view_type": "charts",
+   "ui_schema": [
+     {
+       "key": "interval_sec",
+@@ -18,6 +18,12 @@
+       "label": "Порог фиксации изменения сигнала (dBm)",
+       "type": "number",
+       "default": "5"
++    },
++    {
++      "key": "max_log_mb",
++      "label": "Максимальный размер лога (МБ)",
++      "type": "number",
++      "default": "5"
+     }
+   ]
+ }
 diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
-index 9df0b18..84e4c50 100644
+index 9df0b18..2b476ac 100644
 --- a/utils/wifi/wifi_view.html
 +++ b/utils/wifi/wifi_view.html
-@@ -1,71 +1,212 @@
+@@ -1,71 +1,216 @@
 -<!-- Блок живых карточек экспресс-аналитики вместо старого текста описания -->
 -<div class="row row-cols-1 row-cols-md-4 g-3 mb-4">
 +<!-- Живые карточки экспресс-аналитики Wi-Fi радиоэфира -->
@@ -303,7 +329,7 @@ index 9df0b18..84e4c50 100644
 +            <button id="btn-toggle-pause" class="btn btn-sm btn-outline-secondary" onclick="togglePauseLiveStream()">
 +                <span id="pause-icon">⏸ Пауза</span>
 +            </button>
-+            <button class="btn btn-sm btn-outline-info" onclick="refreshWifiAnalytics()">
++            <button class="btn btn-sm btn-outline-info" onclick="refreshWifiAnalytics(true)">
 +                ↻ Обновить
 +            </button>
 +        </div>
@@ -315,7 +341,7 @@ index 9df0b18..84e4c50 100644
 +        <div class="small">Максимум: <strong class="text-success" id="chart-stat-max">—</strong></div>
 +        <div class="small">Минимум: <strong class="text-danger" id="chart-stat-min">—</strong></div>
 +        <div class="small">Среднее: <strong class="text-warning" id="chart-stat-avg">—</strong></div>
-+        <div class="small ms-auto text-muted">Частота обновления: <span class="text-light">каждые 3 сек</span></div>
++        <div class="small ms-auto text-muted">Частота опроса: <span class="text-light">каждые 3 сек</span></div>
 +    </div>
 +
 +    <!-- Холст Chart.js -->
@@ -338,13 +364,17 @@ index 9df0b18..84e4c50 100644
 +            <small class="text-muted">Журнал сессий и фиксация изменений параметров сети</small>
 +        </div>
 +
-+        <!-- Кнопки экспорта -->
-+        <div class="d-flex align-items-center gap-2">
++        <!-- Кнопки управления журналом -->
++        <div class="d-flex align-items-center flex-wrap gap-2">
++            <span class="small text-muted me-2">Размер файла: <strong id="log-size-badge" class="text-info">0 КБ</strong></span>
 +            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToCSV()">
 +                Экспорт CSV
 +            </button>
 +            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToJSON()">
 +                Экспорт JSON
++            </button>
++            <button class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="clearWifiLogs()">
++                Очистить журнал
 +            </button>
 +        </div>
 +    </div>
@@ -378,7 +408,7 @@ index 9df0b18..84e4c50 100644
                  <tr>
                      <th>Время события</th>
                      <th>Сеть (SSID)</th>
-@@ -74,24 +215,36 @@
+@@ -74,24 +219,36 @@
                      <th>Стандарт</th>
                      <th>Скорость (Rx/Tx)</th>
                      <th>Сигнал</th>
@@ -414,7 +444,7 @@ index 9df0b18..84e4c50 100644
 +  <div class="tab-pane fade glass-card p-4" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
 +    <div class="mb-4">
 +        <h5 class="fw-bold text-white mb-1">Параметры демона Wi-Fi регистратора</h5>
-+        <small class="text-muted">Изменение интервала поллинга и порогов фиксации изменений без перезагрузки системы</small>
++        <small class="text-muted">Интервалы поллинга, пороги и максимальный размер файла логов без перезагрузки системы</small>
 +    </div>
 +
 +    <div id="wifi-custom-config-fields" class="row g-3">
@@ -429,14 +459,12 @@ index 9df0b18..84e4c50 100644
    </div>
  </div>
 diff --git a/utils/wifi/wifi_view.js b/utils/wifi/wifi_view.js
-index 9094a27..dcc9a34 100644
+index 9094a27..943ae63 100644
 --- a/utils/wifi/wifi_view.js
 +++ b/utils/wifi/wifi_view.js
-@@ -1,194 +1,554 @@
+@@ -1,194 +1,596 @@
 +// ==========================================================================
-+// GoOverseer Wi-Fi Telemetry & Analytics Logic (Оптимизированная версия)
-+// Устранены утечки памяти: пакетный DOM-рендеринг, отключение RAF в Chart.js,
-+// ограничение видимых строк таблицы и пауза при неактивной вкладке.
++// GoOverseer Wi-Fi Telemetry & Analytics Logic
 +// ==========================================================================
 +
  let wifiChartInstance = null;
@@ -457,7 +485,6 @@ index 9094a27..dcc9a34 100644
 +
 +    // Периодический опрос каждые 3 секунды
 +    setInterval(() => {
-+        // ОПТИМИЗАЦИЯ: Если вкладка браузера свернута или не активна, не тратим память и CPU
 +        if (!isPaused && !document.hidden) {
 +            refreshWifiAnalytics(false);
 +        }
@@ -476,18 +503,17 @@ index 9094a27..dcc9a34 100644
      const ctx = document.getElementById('wifiSignalChart');
 -    if (!ctx || typeof Chart === 'undefined') return;
 +    if (!ctx) return;
-+
+ 
+-    wifiChartInstance = new Chart(ctx.getContext('2d'), {
 +    if (typeof Chart === 'undefined') {
 +        return;
 +    }
 +
-+    // Если экземпляр уже существует, уничтожаем старый во избежание утечки canvas context
 +    if (wifiChartInstance) {
 +        wifiChartInstance.destroy();
 +        wifiChartInstance = null;
 +    }
- 
--    wifiChartInstance = new Chart(ctx.getContext('2d'), {
++
 +    const canvasCtx = ctx.getContext('2d');
 +    const gradient = canvasCtx.createLinearGradient(0, 0, 0, 350);
 +    gradient.addColorStop(0, 'rgba(6, 182, 212, 0.35)');
@@ -521,9 +547,8 @@ index 9094a27..dcc9a34 100644
          options: {
              responsive: true,
              maintainAspectRatio: false,
-+            // ОПТИМИЗАЦИЯ: Отключаем ресурсоемкие анимации для потоковой телеметрии
 +            animation: false,
-+            normalized: true, // Chart.js быстрая обработка массивов
++            normalized: true,
 +            plugins: {
 +                legend: {
 +                    display: false
@@ -597,38 +622,53 @@ index 9094a27..dcc9a34 100644
      });
  }
  
-+function refreshWifiAnalytics(forceRender = false) {
-+    const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
++function formatBytes(bytes) {
++    if (!bytes || isNaN(bytes) || bytes <= 0) return "0 КБ";
++    if (bytes < 1024) return bytes + " Б";
++    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " КБ";
++    return (bytes / (1024 * 1024)).toFixed(2) + " МБ";
++}
  
 -function refreshWifiAnalytics() {
 -    // 1. Для поиска настроек используем нижний регистр ("wifi")
 -    const rawId = new URLSearchParams(window.location.search).get('id');
 -    const idForConfig = rawId ? rawId.toLowerCase() : "wifi";
--
++function refreshWifiAnalytics(forceRender = false) {
++    const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
+ 
 -    // Отрисовка полей конфигурации
 +    // Подгрузка полей конфигурации при первом открытии
      const fieldsContainer = document.getElementById("wifi-custom-config-fields");
      if (fieldsContainer && fieldsContainer.children.length === 0) {
          fieldsContainer.innerHTML = `
 -            <div class="mb-3 col-md-6">
-+            <div class="col-md-6">
++            <div class="col-md-4">
                  <label class="form-label text-light small fw-bold">Интервал опроса адаптера (сек)</label>
 -                <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" id="cfg_live_interval_sec" value="5">
 +                <div class="input-group input-group-sm">
 +                    <input type="number" min="1" max="300" class="form-control bg-dark text-light border-secondary" id="cfg_live_interval_sec" value="5">
 +                    <span class="input-group-text bg-dark text-muted border-secondary">сек</span>
 +                </div>
-+                <div class="form-text text-muted small">Частота считывания данных netsh в фоновом режиме.</div>
++                <div class="form-text text-muted small">Частота считывания netsh в фоновом режиме.</div>
              </div>
 -            <div class="mb-3 col-md-6">
-+            <div class="col-md-6">
-                 <label class="form-label text-light small fw-bold">Порог фиксации изменения сигнала (dBm)</label>
+-                <label class="form-label text-light small fw-bold">Порог фиксации изменения сигнала (dBm)</label>
 -                <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
++            <div class="col-md-4">
++                <label class="form-label text-light small fw-bold">Порог фиксации сигнала (dBm)</label>
 +                <div class="input-group input-group-sm">
 +                    <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
 +                    <span class="input-group-text bg-dark text-muted border-secondary">dBm</span>
 +                </div>
-+                <div class="form-text text-muted small">Минимальное колебание сигнала для внеочередной записи.</div>
++                <div class="form-text text-muted small">Минимальное колебание для внеочередной записи.</div>
++            </div>
++            <div class="col-md-4">
++                <label class="form-label text-light small fw-bold">Максимальный размер лога (МБ)</label>
++                <div class="input-group input-group-sm">
++                    <input type="number" min="1" max="100" class="form-control bg-dark text-light border-secondary" id="cfg_live_max_log_mb" value="5">
++                    <span class="input-group-text bg-dark text-muted border-secondary">МБ</span>
++                </div>
++                <div class="form-text text-muted small">При превышении создается резервный .old архив.</div>
              </div>
          `;
 -        
@@ -641,6 +681,7 @@ index 9094a27..dcc9a34 100644
                  if (wifi && wifi.settings) {
                      if (wifi.settings.interval_sec) document.getElementById("cfg_live_interval_sec").value = wifi.settings.interval_sec;
                      if (wifi.settings.min_signal_drop_dbm) document.getElementById("cfg_live_min_signal_drop_dbm").value = wifi.settings.min_signal_drop_dbm;
++                    if (wifi.settings.max_log_mb) document.getElementById("cfg_live_max_log_mb").value = wifi.settings.max_log_mb;
                  }
 -            });
 +            })
@@ -650,9 +691,19 @@ index 9094a27..dcc9a34 100644
 -    // 2. А ДЛЯ СЧИТЫВАНИЯ ЛОГОВ ИЗ ПАПКИ ОТПРАВЛЯЕМ ЗАГЛАВНЫМИ ("WIFI")
 -    const idForLogs = rawId ? rawId.toUpperCase() : "WIFI";
 -    fetch(`/api/utils/logs?id=${idForLogs}`)
+-        .then(res => res.json())
 +    // Запрос логов телеметрии
 +    fetch(`/api/utils/logs?id=${encodeURIComponent(rawId.toUpperCase())}`)
-         .then(res => res.json())
++        .then(res => {
++            const sizeHeader = res.headers.get("X-Log-Size-Bytes");
++            if (sizeHeader) {
++                const sizeBadge = document.getElementById("log-size-badge");
++                if (sizeBadge) {
++                    sizeBadge.innerText = formatBytes(parseInt(sizeHeader, 10));
++                }
++            }
++            return res.json();
++        })
          .then(data => {
 -            if (data.length > 0) {
 -                const latestEntry = data[data.length - 1];
@@ -661,11 +712,10 @@ index 9094a27..dcc9a34 100644
 +            if (Array.isArray(data)) {
 +                cachedLogData = data;
 +
-+                // ОПТИМИЗАЦИЯ: Проверяем, появились ли вообще новые данные
 +                if (!forceRender && data.length > 0) {
 +                    const latestTime = data[data.length - 1].time;
 +                    if (latestTime === lastRenderedTimestamp) {
-+                        return; // Новых записей нет — не нагружаем процессор и сборщик мусора
++                        return;
 +                    }
                  }
 -            } else {
@@ -707,7 +757,11 @@ index 9094a27..dcc9a34 100644
 +        const elQuality = document.getElementById("card-signal-quality");
 +        const elBadge = document.getElementById("badge-connection-state");
 +        const visualBars = document.getElementById("wifi-visual-bars");
-+
+ 
+-        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
+-        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
+-        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
+-        
 +        const isDisconnected = !latest.ssid || latest.ssid === "Disconnected" || latest.state === "отключено";
 +
 +        if (elSsid) elSsid.innerText = isDisconnected ? "Отключено" : latest.ssid;
@@ -715,11 +769,7 @@ index 9094a27..dcc9a34 100644
 +        if (elChannel) elChannel.innerText = latest.channel > 0 ? latest.channel : "—";
 +        if (elInterface) elInterface.innerText = latest.interface || "Wi-Fi";
 +        if (elStandard) elStandard.innerText = `Стандарт: ${latest.standard || '—'}`;
- 
--        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
--        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
--        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
--        
++
 +        if (elBand) {
 +            if (latest.channel >= 1 && latest.channel <= 14) {
 +                elBand.innerText = "2.4 ГГц";
@@ -821,8 +871,6 @@ index 9094a27..dcc9a34 100644
 +
 +        wifiChartInstance.data.labels = labels;
 +        wifiChartInstance.data.datasets[0].data = points;
-+
-+        // ОПТИМИЗАЦИЯ: 'none' запрещает запуск цикла requestAnimationFrame
 +        wifiChartInstance.update('none');
 +
 +        const latestSig = points[points.length - 1];
@@ -847,7 +895,6 @@ index 9094a27..dcc9a34 100644
 +        return;
 +    }
 +
-+    // Фильтрация
 +    let filteredData = data;
 +
 +    if (currentLogFilter === 'connected') {
@@ -879,17 +926,7 @@ index 9094a27..dcc9a34 100644
 -    // А. ОБНОВЛЯЕМ ГРАФИК CHART.JS
 -    wifiChartInstance.data.labels = [];
 -    wifiChartInstance.data.datasets[0].data = [];
-+    // ОПТИМИЗАЦИЯ: Отображаем в DOM не более 60 самых свежих строк (остальное доступно в экспорте)
-+    // Это исключает перегрузку браузера десятками тысяч DOM-узлов
 +    const displayRows = filteredData.slice(-60).reverse();
- 
--    const chartPoints = data.slice(-40);
--    chartPoints.forEach(entry => {
--        let labelTime = "—";
--        if (entry.time) {
--            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
-+    // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ ПАМЯТИ: Собираем массив строк в одну операцию
-+    // Запрещено делать tableBody.innerHTML += в цикле!
 +    const htmlChunks = [];
 +
 +    for (let i = 0; i < displayRows.length; i++) {
@@ -898,7 +935,12 @@ index 9094a27..dcc9a34 100644
 +
 +        let statusBadge = `<span class="badge badge-custom badge-connected">Подключено</span>`;
 +        let signalClass = "text-success";
-+
+ 
+-    const chartPoints = data.slice(-40);
+-    chartPoints.forEach(entry => {
+-        let labelTime = "—";
+-        if (entry.time) {
+-            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
 +        if (isDisc) {
 +            statusBadge = `<span class="badge badge-custom badge-disconnected">Отключено</span>`;
 +            signalClass = "text-danger";
@@ -945,13 +987,43 @@ index 9094a27..dcc9a34 100644
 +        `);
 +    }
 +
-+    // Ровно 1 запись в DOM вместо сотен вызовов парсера
 +    tableBody.innerHTML = htmlChunks.join("");
  
      lastRenderedTimestamp = data[data.length - 1].time;
  }
  
 -// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
++// Очистка логов модуля
++function clearWifiLogs() {
++    const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
++    if (confirm("Вы уверены, что хотите полностью очистить журнал телеметрии Wi-Fi? Это действие необратимо.")) {
++        fetch(`/api/utils/logs/clear?id=${encodeURIComponent(rawId.toUpperCase())}`, { method: 'POST' })
++            .then(res => {
++                if (res.ok) {
++                    if (typeof showToast === 'function') {
++                        showToast("Журнал телеметрии успешно очищен!", 'info');
++                    } else {
++                        alert("Журнал успешно очищен!");
++                    }
++                    cachedLogData = [];
++                    lastRenderedTimestamp = "";
++                    renderAnalytics([]);
++                    const sizeBadge = document.getElementById("log-size-badge");
++                    if (sizeBadge) sizeBadge.innerText = "0 КБ";
++                } else {
++                    if (typeof showToast === 'function') {
++                        showToast("Не удалось очистить журнал.", 'danger');
++                    } else {
++                        alert("Ошибка очистки журнала.");
++                    }
++                }
++            })
++            .catch(err => {
++                alert("Ошибка сети: " + err);
++            });
++    }
++}
++
 +// Управление отображением графика
 +function setChartPointsLimit(limit) {
 +    currentPointsLimit = limit;
@@ -1053,7 +1125,8 @@ index 9094a27..dcc9a34 100644
 -        interval_sec: document.getElementById("cfg_live_interval_sec").value,
 -        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm").value
 +        interval_sec: document.getElementById("cfg_live_interval_sec") ? document.getElementById("cfg_live_interval_sec").value : "5",
-+        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "5"
++        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "5",
++        max_log_mb: document.getElementById("cfg_live_max_log_mb") ? document.getElementById("cfg_live_max_log_mb").value : "5"
      };
  
 -    fetch(`/api/utils/save?id=${id}`, {
@@ -1091,7 +1164,7 @@ index 9094a27..dcc9a34 100644
 -}
 -}
 diff --git a/utils/wifi/wifi_worker.go b/utils/wifi/wifi_worker.go
-index 67f355e..0786126 100644
+index 67f355e..ddbc1c1 100644
 --- a/utils/wifi/wifi_worker.go
 +++ b/utils/wifi/wifi_worker.go
 @@ -4,6 +4,7 @@ import (
@@ -1111,7 +1184,7 @@ index 67f355e..0786126 100644
  type WifiData struct {
  	Time      string `json:"time"`
  	Interface string `json:"interface"`
-@@ -29,22 +30,21 @@ type WifiData struct {
+@@ -29,23 +30,39 @@ type WifiData struct {
  	State     string `json:"state"`
  }
  
@@ -1121,6 +1194,20 @@ index 67f355e..0786126 100644
 -	IntervalSec string `json:"interval_sec"`
 +	IntervalSec      string `json:"interval_sec"`
 +	MinSignalDropDbm string `json:"min_signal_drop_dbm"`
++	MaxLogMb         string `json:"max_log_mb"`
++}
++
++// Ротация лог-файла при превышении максимального размера
++func checkAndRotateLog(filePath string, maxBytes int64) {
++	fi, err := os.Stat(filePath)
++	if err != nil || fi.Size() < maxBytes {
++		return
++	}
++
++	// Храним не более одного архивного файла .old
++	oldPath := filePath + ".old"
++	_ = os.Remove(oldPath)
++	_ = os.Rename(filePath, oldPath)
  }
  
  func main() {
@@ -1135,11 +1222,16 @@ index 67f355e..0786126 100644
  	workDir := filepath.Dir(exePath)
  
 -	// Настраиваем системный логгер демона для отладки ошибок
-+	// Настраиваем системный логгер демона для отладки
- 	logFile, _ := os.OpenFile(filepath.Join(workDir, "wifi_daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+-	logFile, _ := os.OpenFile(filepath.Join(workDir, "wifi_daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
++	daemonLogPath := filepath.Join(workDir, "wifi_daemon.log")
++	// Ограничиваем отладочный лог демона до 1 МБ
++	checkAndRotateLog(daemonLogPath, 1*1024*1024)
++
++	logFile, _ := os.OpenFile(daemonLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
  	if logFile != nil {
  		log.SetOutput(logFile)
-@@ -54,9 +54,16 @@ func main() {
+ 		defer logFile.Close()
+@@ -54,9 +71,17 @@ func main() {
  	configPath := filepath.Join(workDir, "config.json")
  	recordsPath := filepath.Join(workDir, "wifi_records.jsonl")
  
@@ -1154,16 +1246,20 @@ index 67f355e..0786126 100644
 +		// 2. Читаем актуальные настройки из config.json
 +		interval := 5
 +		minDropDbm := 0
++		maxLogMb := 5 // дефолтное ограничение размера: 5 МБ
 +
  		cfgData, err := os.ReadFile(configPath)
  		if err == nil {
  			var cfg Config
-@@ -64,28 +71,62 @@ func main() {
+@@ -64,28 +89,67 @@ func main() {
  				if val, err := strconv.Atoi(cfg.IntervalSec); err == nil && val > 0 {
  					interval = val
  				}
 +				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val > 0 {
 +					minDropDbm = val
++				}
++				if val, err := strconv.Atoi(cfg.MaxLogMb); err == nil && val > 0 {
++					maxLogMb = val
 +				}
  			}
  		}
@@ -1176,9 +1272,7 @@ index 67f355e..0786126 100644
 -		jsonData, err := json.Marshal(currentData)
 -		if err == nil {
 -			f, err := os.OpenFile(recordsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-+		// 4. Проверяем условие логирования:
-+		// Если порог minDropDbm задан, пишем при изменении сигнала >= порога,
-+		// при смене сети/состояния или принудительно раз в 30 секунд (heartbeat для живого графика)
++		// 4. Проверяем условие логирования
 +		shouldWrite := true
 +		if minDropDbm > 0 && lastSignal != -999 {
 +			diff := int(math.Abs(float64(currentData.Signal - lastSignal)))
@@ -1191,6 +1285,10 @@ index 67f355e..0786126 100644
 +		}
 +
 +		if shouldWrite {
++			// Проверяем лимит размера лога перед записью
++			maxBytes := int64(maxLogMb) * 1024 * 1024
++			checkAndRotateLog(recordsPath, maxBytes)
++
 +			jsonData, err := json.Marshal(currentData)
  			if err == nil {
 -				_, _ = io.WriteString(f, string(jsonData)+"\n")
@@ -1230,7 +1328,7 @@ index 67f355e..0786126 100644
  func parseWindowsWifi() WifiData {
  	res := WifiData{
  		Time:      time.Now().Format("2006-01-02 15:04:05"),
-@@ -101,8 +142,6 @@ func parseWindowsWifi() WifiData {
+@@ -101,8 +165,6 @@ func parseWindowsWifi() WifiData {
  	}
  
  	cmd := exec.Command("netsh", "wlan", "show", "interfaces")
@@ -1239,7 +1337,7 @@ index 67f355e..0786126 100644
  	cmd.SysProcAttr = &syscall.SysProcAttr{
  		HideWindow: true,
  	}
-@@ -112,9 +151,17 @@ func parseWindowsWifi() WifiData {
+@@ -112,9 +174,17 @@ func parseWindowsWifi() WifiData {
  		return res
  	}
  
@@ -1259,7 +1357,7 @@ index 67f355e..0786126 100644
  
  	for _, line := range lines {
  		line = strings.TrimSpace(line)
-@@ -139,12 +186,10 @@ func parseWindowsWifi() WifiData {
+@@ -139,12 +209,10 @@ func parseWindowsWifi() WifiData {
  		case key == "Канал" || key == "Channel":
  			ch, _ := strconv.Atoi(val)
  			res.Channel = int32(ch)
@@ -1277,7 +1375,7 @@ index 67f355e..0786126 100644
  			val = strings.TrimSuffix(val, "%")
  			pct, _ := strconv.Atoi(val)
 diff --git a/web/handlers.go b/web/handlers.go
-index 80a5bbd..7088ecd 100644
+index 80a5bbd..edbf40c 100644
 --- a/web/handlers.go
 +++ b/web/handlers.go
 @@ -5,12 +5,18 @@ import (
@@ -1372,12 +1470,12 @@ index 80a5bbd..7088ecd 100644
 -		}
 +	return list
 +}
- 
--		rawTemplate, err := os.ReadFile(infoFilePath)
++
 +func ScanUtils() ([]UtilityInfo, error) {
 +	var list []UtilityInfo
 +	subDirs := getUtilSubDirs()
-+
+ 
+-		rawTemplate, err := os.ReadFile(infoFilePath)
 +	appDataDir, _ := os.UserConfigDir()
 +
 +	for _, dirName := range subDirs {
@@ -1443,17 +1541,15 @@ index 80a5bbd..7088ecd 100644
  		http.StripPrefix("/static/", fileServer).ServeHTTP(w, r)
  	})
  
-@@ -172,6 +187,9 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -172,6 +187,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write(jsonResponse)
  	})
  
-+	// Активация модуля:
-+	// Считывает .exe из встроенного EmbeddedFS (или utils/), копирует в %APPDATA%\GoOverseer\<ID>,
-+	// генерирует config.json, регистрирует в автозагрузке Windows и запускает фоновый процесс.
++	// Активация модуля
  	mux.HandleFunc("POST /api/utils/activate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -182,28 +200,40 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -182,25 +198,33 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1467,17 +1563,15 @@ index 80a5bbd..7088ecd 100644
  		if target == nil {
 -			http.Error(w, "Utility not found", http.StatusNotFound)
 +			http.Error(w, "Модуль не найден", http.StatusNotFound)
- 			return
- 		}
- 
-+		// 1. Получаем бинарник демона (с диска или из встроенного EmbeddedFS)
-+		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
-+		if err != nil {
-+			http.Error(w, fmt.Sprintf("Бинарник %s модуля %s не найден (возможно, еще не скомпилирован): %v", target.ExeName, target.ID, err), http.StatusBadRequest)
 +			return
 +		}
 +
-+		// 2. Создаем директорию модуля в %APPDATA%\GoOverseer\<ID>
++		exeBytes, err := ReadUtilFile(strings.ToLower(target.ID), target.ExeName)
++		if err != nil {
++			http.Error(w, fmt.Sprintf("Бинарник %s модуля %s не найден (возможно, еще не скомпилирован): %v", target.ExeName, target.ID, err), http.StatusBadRequest)
+ 			return
+ 		}
+ 
  		appDataDir, _ := os.UserConfigDir()
  		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 -		_ = os.MkdirAll(liveDir, 0755)
@@ -1487,7 +1581,6 @@ index 80a5bbd..7088ecd 100644
 +		}
  
 -		srcExe := filepath.Join("utils", strings.ToLower(target.ID), target.ExeName)
-+		// 3. Копируем исполняемый файл демона в AppData
  		dstExe := filepath.Join(liveDir, target.ExeName)
 -		if err := copyFile(srcExe, dstExe); err != nil {
 -			http.Error(w, "Ошибка копирования бинарника: "+err.Error(), http.StatusInternalServerError)
@@ -1496,22 +1589,9 @@ index 80a5bbd..7088ecd 100644
  			return
  		}
  
-+		// 4. Создаем конфигурационный файл config.json
- 		defaultSettings := make(map[string]string)
- 		for _, schema := range target.UISchema {
- 			defaultSettings[schema.Key] = schema.Default
-@@ -211,13 +241,19 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
- 		cfgData, _ := json.MarshalIndent(defaultSettings, "", "  ")
- 		_ = os.WriteFile(filepath.Join(liveDir, "config.json"), cfgData, 0644)
- 
-+		// 5. Прописываем в автозагрузку Windows
- 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
- 		if err == nil {
- 			_ = k.SetStringValue("GoOverseer_"+target.ID, dstExe)
- 			k.Close()
+@@ -218,6 +242,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		}
  
-+		// 6. Запускаем процесс демона в скрытом режиме с рабочей директорией в AppData
  		cmd := exec.Command(dstExe)
 +		cmd.Dir = liveDir
 +		cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -1520,16 +1600,15 @@ index 80a5bbd..7088ecd 100644
  		if err := cmd.Start(); err != nil {
  			log.Printf("Предупреждение: не удалось запустить демон на лету: %v", err)
  		}
-@@ -226,6 +262,8 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -226,6 +254,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Activated successfully"))
  	})
  
-+	// Деактивация модуля:
-+	// Принудительно гасит процесс, стирает ключ из реестра Windows и полностью зачищает папку в AppData.
++	// Деактивация модуля
  	mux.HandleFunc("POST /api/utils/deactivate", func(w http.ResponseWriter, r *http.Request) {
  		id := r.URL.Query().Get("id")
  		if id == "" {
-@@ -236,28 +274,48 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -236,18 +265,20 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1547,20 +1626,14 @@ index 80a5bbd..7088ecd 100644
  		}
  
 -		_ = exec.Command("taskkill", "/F", "/IM", target.ExeName).Run()
-+		// 1. Принудительно завершаем процесс и все его дочерние процессы без мигания консоли
 +		killCmd := exec.Command("taskkill", "/F", "/T", "/IM", target.ExeName)
 +		killCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 +		_ = killCmd.Run()
  
-+		// 2. Удаляем ключ из автозагрузки Windows
  		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
  		if err == nil {
- 			_ = k.DeleteValue("GoOverseer_" + target.ID)
- 			k.Close()
- 		}
+@@ -257,7 +288,21 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  
-+		// 3. Зачищаем все файлы и папку модуля из %APPDATA%\GoOverseer\<ID>
-+		// Делаем повторные попытки с интервалом, чтобы ядро Windows успело освободить дескрипторы
  		appDataDir, _ := os.UserConfigDir()
  		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
 -		_ = os.RemoveAll(liveDir)
@@ -1582,7 +1655,7 @@ index 80a5bbd..7088ecd 100644
  
  		w.WriteHeader(http.StatusOK)
  		_, _ = w.Write([]byte("Deactivated successfully"))
-@@ -287,13 +345,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -287,13 +332,13 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		liveConfigPath := filepath.Join(appDataDir, "GoOverseer", id, "config.json")
  
  		if _, err := os.Stat(liveConfigPath); os.IsNotExist(err) {
@@ -1598,7 +1671,7 @@ index 80a5bbd..7088ecd 100644
  			return
  		}
  
-@@ -311,7 +369,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -311,7 +356,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1607,7 +1680,7 @@ index 80a5bbd..7088ecd 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -322,10 +380,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -322,10 +367,10 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  
@@ -1621,7 +1694,7 @@ index 80a5bbd..7088ecd 100644
  			return
  		}
  
-@@ -342,13 +400,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -342,13 +387,14 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			"ID":          target.ID,
  			"Name":        target.Name,
  			"Description": target.Description,
@@ -1633,11 +1706,11 @@ index 80a5bbd..7088ecd 100644
  		_ = baseTmpl.Execute(w, data)
  	})
  
-+	// Считывание логов телеметрии из %APPDATA%\GoOverseer\<ID>\<LogFile>
++	// Считывание логов телеметрии
  	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
  		w.Header().Set("Content-Type", "application/json")
  		id := r.URL.Query().Get("id")
-@@ -360,7 +419,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -360,7 +406,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		utilsList, _ := ScanUtils()
  		var target *UtilityInfo
  		for i := range utilsList {
@@ -1646,7 +1719,7 @@ index 80a5bbd..7088ecd 100644
  				target = &utilsList[i]
  				break
  			}
-@@ -374,26 +433,44 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -374,26 +420,79 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		appDataDir, _ := os.UserConfigDir()
  		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
  
@@ -1657,6 +1730,9 @@ index 80a5bbd..7088ecd 100644
  			return
  		}
 -		lines := strings.Split(string(file), "\n")
++
++		// Передаем фактический размер лог-файла в заголовке для интерфейса
++		w.Header().Set("X-Log-Size-Bytes", fmt.Sprintf("%d", fileInfo.Size()))
 +
 +		// Если лог-файл большой, читаем только хвост (последние 256 КБ)
 +		var fileBytes []byte
@@ -1691,11 +1767,43 @@ index 80a5bbd..7088ecd 100644
  	})
 -	// Роут для скриптов аналитики со склада
 +
++	// Очистка логов модуля по требованию пользователя
++	mux.HandleFunc("POST /api/utils/logs/clear", func(w http.ResponseWriter, r *http.Request) {
++		id := r.URL.Query().Get("id")
++		if id == "" {
++			http.Error(w, "Missing id parameter", http.StatusBadRequest)
++			return
++		}
++
++		utilsList, _ := ScanUtils()
++		var target *UtilityInfo
++		for i := range utilsList {
++			if strings.EqualFold(utilsList[i].ID, id) {
++				target = &utilsList[i]
++				break
++			}
++		}
++
++		if target == nil {
++			http.Error(w, "Модуль не найден", http.StatusNotFound)
++			return
++		}
++
++		appDataDir, _ := os.UserConfigDir()
++		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
++
++		_ = os.WriteFile(logFilePath, []byte(""), 0644)
++		_ = os.Remove(logFilePath + ".old")
++
++		w.WriteHeader(http.StatusOK)
++		_, _ = w.Write([]byte("Logs cleared successfully"))
++	})
++
 +	// Роут для скриптов аналитики (сначала с диска, если нет - из EmbeddedFS)
  	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
  		pathParts := strings.Split(r.URL.Path, "/")
  		if len(pathParts) == 0 {
-@@ -407,8 +484,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -407,8 +506,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  			return
  		}
  		folderName := strings.ToLower(nameParts[0])
@@ -1705,7 +1813,7 @@ index 80a5bbd..7088ecd 100644
  		if err != nil {
  			http.NotFound(w, r)
  			return
-@@ -423,5 +499,6 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+@@ -423,5 +521,6 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
  		_, _ = w.Write([]byte("Stopping..."))
  		go shutdownCtxCancel()
  	})

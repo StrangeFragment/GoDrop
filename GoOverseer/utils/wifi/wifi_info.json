@@ -18,6 +18,12 @@
       "label": "Порог фиксации изменения сигнала (dBm)",
       "type": "number",
       "default": "5"
+    },
+    {
+      "key": "max_log_mb",
+      "label": "Максимальный размер лога (МБ)",
+      "type": "number",
+      "default": "5"
     }
   ]
 }
