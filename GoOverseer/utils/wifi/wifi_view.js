@@ -9,6 +9,8 @@ let currentPointsLimit = 30;
 let isPaused = false;
 let currentLogFilter = 'all';
 let searchQuery = '';
+let isDedupEnabled = true;
+let logRowsLimit = 50;
 
 let pollTimer = null;
 let pollIntervalMs = 3000;
@@ -448,6 +450,33 @@ function renderAnalytics(data) {
         );
     }
 
+    // Умное прореживание логов (дедупликация монотонных замеров без изменений)
+    if (isDedupEnabled && filteredData.length > 0) {
+        const deduped = [];
+        let prev = null;
+        for (let i = 0; i < filteredData.length; i++) {
+            const curr = filteredData[i];
+            if (!prev) {
+                deduped.push(curr);
+                prev = curr;
+                continue;
+            }
+            const stateChanged = curr.state !== prev.state || curr.ssid !== prev.ssid;
+            const bssidChanged = curr.bssid !== prev.bssid;
+            const channelChanged = curr.channel !== prev.channel;
+            const signalSignificantDelta = Math.abs(curr.signal - prev.signal) >= 3;
+
+            if (stateChanged || bssidChanged || channelChanged || signalSignificantDelta) {
+                deduped.push(curr);
+                prev = curr;
+            }
+        }
+        if (deduped.length > 0 && deduped[deduped.length - 1] !== filteredData[filteredData.length - 1]) {
+            deduped.push(filteredData[filteredData.length - 1]);
+        }
+        filteredData = deduped;
+    }
+
     const counterEl = document.getElementById("records-counter");
     if (counterEl) counterEl.innerText = filteredData.length;
 
@@ -456,7 +485,11 @@ function renderAnalytics(data) {
         return;
     }
 
-    const displayRows = filteredData.slice(-60).reverse();
+    let displayRows = filteredData;
+    if (logRowsLimit > 0 && filteredData.length > logRowsLimit) {
+        displayRows = filteredData.slice(-logRowsLimit);
+    }
+    displayRows = displayRows.slice().reverse();
     const htmlChunks = [];
 
     for (let i = 0; i < displayRows.length; i++) {
