@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoOverseer — {{if .Name}}{{.Name}}{{else}}Мониторинг Wi-Fi{{end}}</title>
+    <link rel="icon" type="image/png" href="/static/assets/overseer.png">
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <!-- Верхняя навигационная панель -->
+    <nav class="navbar navbar-expand-lg navbar-custom sticky-top">
+        <div class="container">
+            <div class="d-flex align-items-center">
+                <a class="navbar-brand d-flex align-items-center me-3 brand-glow" href="/">
+                    <img src="/static/assets/overseer.png" alt="Logo" width="32" height="32" class="me-2">
+                    <strong class="text-white tracking-wide">GoOverseer</strong>
+                </a>
+                <span class="text-secondary me-2">/</span>
+                <span class="text-light fw-semibold fs-6">
+                    {{if .Name}}{{.Name}}{{else}}Мониторинг Wi-Fi{{end}}
+                </span>
+            </div>
+
+            <div class="d-flex align-items-center gap-3">
+                <div class="d-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25);">
+                    <span class="pulse-dot"></span>
+                    <small class="text-success fw-semibold">Онлайн-телеметрия</small>
+                </div>
+                <a href="/" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
+                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
+                        <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
+                    </svg>
+                    Модули
+                </a>
+                <button onclick="confirmShutdown()" class="btn btn-outline-danger btn-sm rounded-pill px-3">
+                    Остановить ядро
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Основной контейнер аналитики -->
+    <main class="container my-4 my-md-5">
+        <div class="row">
+            <div class="col-12">
+                {{.CustomHTML}} <!-- Сюда вставляется динамический шаблон модуля -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Модальное окно подтверждения остановки -->
+    <div class="modal fade" id="shutdownModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content glass-card">
+                <div class="modal-header border-bottom border-secondary-subtle">
+                    <h5 class="modal-title fw-bold text-danger">Остановка оркестратора</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body py-4 text-center">
+                    <p class="mb-1 fs-5">Полностью выгрузить оркестратор GoOverseer?</p>
+                    <small class="text-muted">Веб-интерфейс будет закрыт, а фоновые службы остановлены.</small>
+                </div>
+                <div class="modal-footer border-top border-secondary-subtle">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="executeShutdown()">Остановить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Контейнер для всплывающих уведомлений (Toasts) -->
+    <div class="toast-container toast-container-custom" id="toastContainer"></div>
+
+    <!-- Локальный Bootstrap Bundle -->
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+
+    <!-- КРИТИЧЕСКИЙ ФИКС: Подгружаем Chart.js ДО скрипта модуля аналитики -->
+    <script src="/static/js/chart.min.js"></script>
+
+    <!-- Подгружаем скрипт логики со склада -->
+    <script src="/static/js/utils/{{.CustomJS}}"></script>
+
+    <script>
+        function confirmShutdown() {
+            const modalEl = document.getElementById('shutdownModal');
+            if (modalEl && window.bootstrap) {
+                const modal = new bootstrap.Modal(modalEl);
+                modal.show();
+            } else if (confirm("Остановить оркестратор GoOverseer?")) {
+                executeShutdown();
+            }
+        }
+
+        function executeShutdown() {
+            fetch('/api/shutdown', { method: 'POST' })
+                .then(() => {
+                    document.body.innerHTML = `
+                        <div class="d-flex align-items-center justify-content-center vh-100 bg-dark text-white text-center p-4">
+                            <div>
+                                <h2 class="mb-3 text-danger">Оркестратор GoOverseer остановлен</h2>
+                                <p class="text-muted">Сервер успешно завершил работу. Вкладку браузера можно закрыть.</p>
+                            </div>
+                        </div>
+                    `;
+                });
+        }
+    </script>
+</body>
+</html>

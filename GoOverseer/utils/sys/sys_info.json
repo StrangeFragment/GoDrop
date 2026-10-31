@@ -1,0 +1,17 @@
+{
+  "id": "SYS",
+  "name": "Контроль системы и сессий",
+  "description": "Регистрирует время работы ПК, входы/выходы пользователей, блокировки экрана и запуск критических процессов.",
+  "exe_name": "sys_guardian.exe",
+  "log_file": "sys_audit.jsonl",
+  "has_charts": true,
+  "view_type": "timeline",
+  "ui_schema": [
+    {
+      "key": "audit_interval_min",
+      "label": "Интервал проверки активности (минут)",
+      "type": "number",
+      "default": "10"
+    }
+  ]
+}

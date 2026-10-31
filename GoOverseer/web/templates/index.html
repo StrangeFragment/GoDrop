@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoOverseer — Панель управления</title>
+    <link rel="icon" type="image/png" href="/static/assets/overseer.png">
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <!-- Верхняя навигационная панель -->
+    <nav class="navbar navbar-expand-lg navbar-custom sticky-top">
+        <div class="container">
+            <a class="navbar-brand d-flex align-items-center brand-glow" href="/">
+                <img src="/static/assets/overseer.png" alt="Logo" width="32" height="32" class="me-2">
+                <strong class="text-white tracking-wide">GoOverseer</strong>
+            </a>
+
+            <div class="d-flex align-items-center gap-3">
+                <div class="d-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25);">
+                    <span class="pulse-dot"></span>
+                    <small class="text-success fw-semibold">Ядро активно</small>
+                </div>
+                <button onclick="confirmShutdown()" class="btn btn-outline-danger btn-sm rounded-pill px-3">
+                    Остановить ядро
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Основной контейнер управления -->
+    <main class="container my-4 my-md-5">
+        <div class="row mb-4 align-items-center">
+            <div class="col-md-8">
+                <h2 class="fw-bold mb-1 text-white">Мониторинг и демоны-регистраторы</h2>
+                <p class="text-muted mb-0">Управление модулями системного аудита, автозагрузкой и аналитикой в реальном времени.</p>
+            </div>
+            <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                <button onclick="loadUtilities()" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
+                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
+                        <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                        <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                    </svg>
+                    Обновить статус
+                </button>
+            </div>
+        </div>
+
+        <!-- Динамический список утилит -->
+        <div id="utils-container" class="row row-cols-1 g-4">
+            <div class="col text-center py-5">
+                <div class="spinner-border text-info" role="status">
+                    <span class="visually-hidden">Загрузка модулей...</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Модальное окно подтверждения остановки -->
+    <div class="modal fade" id="shutdownModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content glass-card">
+                <div class="modal-header border-bottom border-secondary-subtle">
+                    <h5 class="modal-title fw-bold text-danger">Остановка оркестратора</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body py-4 text-center">
+                    <p class="mb-1 fs-5">Полностью выгрузить оркестратор GoOverseer?</p>
+                    <small class="text-muted">Веб-интерфейс будет закрыт, а фоновые службы остановлены.</small>
+                </div>
+                <div class="modal-footer border-top border-secondary-subtle">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="executeShutdown()">Остановить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Контейнер тостов -->
+    <div class="toast-container toast-container-custom" id="toastContainer"></div>
+
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

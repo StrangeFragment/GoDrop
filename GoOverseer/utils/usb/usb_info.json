@@ -1,0 +1,17 @@
+{
+  "id": "USB",
+  "name": "Мониторинг USB-устройств",
+  "description": "Фиксирует подключение и отключение внешних накопителей, мышей, клавиатур и токенов авторизации.",
+  "exe_name": "usb_logger.exe",
+  "log_file": "usb_events.jsonl",
+  "has_charts": false,
+  "view_type": "events",
+  "ui_schema": [
+    {
+      "key": "track_storage_only",
+      "label": "Отслеживать только флешки и накопители (0/1)",
+      "type": "number",
+      "default": "1"
+    }
+  ]
+}

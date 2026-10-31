@@ -1,0 +1,2225 @@
+diff --git a/overseer.go b/overseer.go
+index 969e80f..f37f390 100644
+--- a/overseer.go
++++ b/overseer.go
+@@ -5,9 +5,10 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"log"
++	"net"
+ 	"os"
+ 	"os/signal"
+-	"path/filepath" // Необходим для сборки путей к файлам
++	"path/filepath"
+ 	"syscall"
+ 	"unsafe"
+ 
+@@ -41,6 +42,16 @@ func tryCaptureMutexForPort(port int) (syscall.Handle, bool) {
+ 	return hMutex, true
+ }
+ 
++// Проверяет фактическую доступность TCP порта
++func isTCPPortAvailable(port int) bool {
++	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
++	if err != nil {
++		return false
++	}
++	_ = l.Close()
++	return true
++}
++
+ // Инициализирует и проверяет рабочую папку в %APPDATA%
+ func initAppData() (string, error) {
+ 	appDataDir, err := os.UserConfigDir()
+@@ -79,7 +90,6 @@ func initAppData() (string, error) {
+ func main() {
+ 	log.Println("Инициализация окружения GoOverseer...")
+ 
+-	// Вызываем проверку папки AppData при старте программы
+ 	appDataPath, err := initAppData()
+ 	if err != nil {
+ 		log.Fatalf("Критическая ошибка инициализации системы: %v", err)
+@@ -90,32 +100,31 @@ func main() {
+ 	var runningPort int = 0
+ 	var isFirstInstance bool = false
+ 
+-	// ЗАЩИТА ПРИ СТАРТЕ: Сканируем мутексы Windows, чтобы найти живую первую копию
++	// ЗАЩИТА ПРИ СТАРТЕ: Сканируем диапазон портов и мутексов
+ 	for port := 8080; port <= 8090; port++ {
+ 		hMutex, success := tryCaptureMutexForPort(port)
+ 		if !success {
++			// Мутекс уже захвачен другой копией GoOverseer
+ 			runningPort = port
+ 			break
+ 		}
+ 
+-		if port == 8080 && success {
+-			activeHandle = hMutex
+-			runningPort = port
+-			isFirstInstance = true
+-			break
++		// Мутекс свободен. Проверяем также доступность TCP сокета
++		if !isTCPPortAvailable(port) {
++			_ = syscall.CloseHandle(hMutex)
++			continue
+ 		}
+ 
+-		if success {
+-			activeHandle = hMutex
+-			runningPort = port
+-			isFirstInstance = true
+-			break
+-		}
++		activeHandle = hMutex
++		runningPort = port
++		isFirstInstance = true
++		break
+ 	}
+ 
+-	// Если мы ВТОРАЯ копия — просто тихо закрываемся
++	// Если мы ВТОРАЯ копия — открываем браузер или выходим
+ 	if !isFirstInstance && runningPort > 0 {
+-		log.Printf("GoOverseer уже запущен на порту %d. Завершение работы копии.", runningPort)
++		log.Printf("GoOverseer уже запущен на порту %d. Открытие панели в браузере и завершение копии.", runningPort)
++		tray.OpenBrowserInWindows(fmt.Sprintf("http://127.0.0.1:%d", runningPort))
+ 		os.Exit(0)
+ 	}
+ 
+@@ -125,7 +134,6 @@ func main() {
+ 		}
+ 	}()
+ 
+-	// МЫ ПЕРВАЯ КОПИЯ — продолжаем штатный запуск сервера строго на найденном свободном порту
+ 	mainCtx, cancelAll := context.WithCancel(context.Background())
+ 	defer cancelAll()
+ 
+@@ -137,7 +145,7 @@ func main() {
+ 		log.Fatalf("Ошибка инициализации сервера: %v", err)
+ 	}
+ 
+-	// Достаем байты иконки из встроенной статики
++	// Иконка трея
+ 	staticFS := web.GetStaticFS()
+ 	iconFile, err := staticFS.Open("assets/overseer.png")
+ 	var iconBytes []byte
+@@ -148,7 +156,6 @@ func main() {
+ 		iconFile.Close()
+ 	}
+ 
+-	// Настраиваем и запускаем системный трей
+ 	t := tray.InitTray(serverURL, iconBytes, cancelAll)
+ 
+ 	// Системные прерывания (Ctrl+C)
+diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
+index 9df0b18..84e4c50 100644
+--- a/utils/wifi/wifi_view.html
++++ b/utils/wifi/wifi_view.html
+@@ -1,71 +1,212 @@
+-<!-- Блок живых карточек экспресс-аналитики вместо старого текста описания -->
+-<div class="row row-cols-1 row-cols-md-4 g-3 mb-4">
++<!-- Живые карточки экспресс-аналитики Wi-Fi радиоэфира -->
++<div class="row row-cols-1 row-cols-sm-2 row-cols-xl-4 g-3 mb-4">
++    <!-- Карточка 1: SSID -->
+     <div class="col">
+-        <div class="card bg-body-tertiary border-secondary-subtle shadow-sm h-100">
+-            <div class="card-body py-3">
+-                <h6 class="text-uppercase text-muted small fw-bold mb-1">Текущая сеть (SSID)</h6>
+-                <h4 class="mb-0 fw-bold text-truncate" id="card-ssid">—</h4>
++        <div class="card glass-card metric-card metric-card-ssid h-100 p-3">
++            <div class="d-flex justify-content-between align-items-start mb-2">
++                <span class="text-uppercase text-muted small fw-bold tracking-wider">Текущая сеть (SSID)</span>
++                <div class="metric-icon-bubble">
++                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
++                        <path d="M15.384 6.115a.485.485 0 0 0-.047-.736A12.444 12.444 0 0 0 8 3C5.259 3 2.723 3.882.663 5.379a.485.485 0 0 0-.048.736.518.518 0 0 0 .668.05A11.448 11.448 0 0 1 8 4c2.507 0 4.827.802 6.716 2.164.205.148.49.13.668-.049z"/>
++                        <path d="M13.229 8.271a.482.482 0 0 0-.063-.745A9.455 9.455 0 0 0 8 6c-1.905 0-3.68.56-5.166 1.526a.48.48 0 0 0-.063.745.525.525 0 0 0 .652.065A8.46 8.46 0 0 1 8 7a8.46 8.46 0 0 1 4.577 1.336c.205.132.48.11.652-.065zm-2.183 2.183c.226-.226.185-.6-.1-.801A6.49 6.49 0 0 0 8 9c-1.064 0-2.062.255-2.946.707a.541.541 0 0 0-.1.802l.033.033a.477.477 0 0 0 .677.02A5.474 5.474 0 0 1 8 10a5.474 5.474 0 0 1 2.336.562.477.477 0 0 0 .677-.02l.033-.033zM9.06 12.44c.196-.196.198-.52-.04-.702A3.5 3.5 0 0 0 8 11.5a3.5 3.5 0 0 0-1.02.238c-.238.182-.236.506-.04.702l.708.707a.5.5 0 0 0 .707 0l.707-.707z"/>
++                    </svg>
++                </div>
++            </div>
++            <h4 class="mb-1 fw-bold text-truncate text-white" id="card-ssid">—</h4>
++            <div class="d-flex align-items-center gap-2 mt-auto pt-2">
++                <span id="badge-connection-state" class="badge badge-custom badge-connected">Связь активна</span>
++                <small class="text-muted text-truncate" id="card-speeds">Линк: —</small>
+             </div>
+         </div>
+     </div>
++
++    <!-- Карточка 2: BSSID -->
+     <div class="col">
+-        <div class="card bg-body-tertiary border-secondary-subtle shadow-sm h-100">
+-            <div class="card-body py-3">
+-                <h6 class="text-uppercase text-muted small fw-bold mb-1">Точка доступа (BSSID)</h6>
+-                <h4 class="mb-0 fw-bold text-truncate text-monospace small" id="card-bssid">—</h4>
++        <div class="card glass-card metric-card metric-card-bssid h-100 p-3">
++            <div class="d-flex justify-content-between align-items-start mb-2">
++                <span class="text-uppercase text-muted small fw-bold tracking-wider">Точка доступа (BSSID)</span>
++                <div class="metric-icon-bubble">
++                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
++                        <path d="M11 2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12h.5a.5.5 0 0 1 0 1H.5a.5.5 0 0 1 0-1H1v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h1V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7h1V2zm1 12h2V2h-2v12zm-5 0h2V7H7v7zm-5 0h2v-3H2v3z"/>
++                    </svg>
++                </div>
++            </div>
++            <div class="d-flex align-items-center justify-content-between">
++                <h5 class="mb-1 fw-bold text-monospace text-truncate text-white" id="card-bssid">—</h5>
++                <button class="btn btn-sm btn-outline-secondary p-1 border-0" onclick="copyBssidToClipboard()" title="Скопировать BSSID">
++                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
++                        <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
++                        <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/>
++                    </svg>
++                </button>
++            </div>
++            <div class="mt-auto pt-2">
++                <small class="text-muted" id="card-standard">Стандарт: —</small>
+             </div>
+         </div>
+     </div>
++
++    <!-- Карточка 3: Канал -->
+     <div class="col">
+-        <div class="card bg-body-tertiary border-secondary-subtle shadow-sm h-100">
+-            <div class="card-body py-3">
+-                <h6 class="text-uppercase text-muted small fw-bold mb-1">Канал радиоэфира</h6>
+-                <h4 class="mb-0 fw-bold text-primary" id="card-channel">—</h4>
++        <div class="card glass-card metric-card metric-card-channel h-100 p-3">
++            <div class="d-flex justify-content-between align-items-start mb-2">
++                <span class="text-uppercase text-muted small fw-bold tracking-wider">Канал радиоэфира</span>
++                <div class="metric-icon-bubble">
++                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
++                        <path d="M2.5 11.5A.5.5 0 0 1 3 11h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm-2-4A.5.5 0 0 1 1 7h14a.5.5 0 0 1 0 1H1a.5.5 0 0 1-.5-.5zm3-4A.5.5 0 0 1 4 3h8a.5.5 0 0 1 0 1H4a.5.5 0 0 1-.5-.5z"/>
++                    </svg>
++                </div>
++            </div>
++            <div class="d-flex align-items-baseline gap-2">
++                <h4 class="mb-1 fw-bold text-white" id="card-channel">—</h4>
++                <span class="badge bg-secondary-subtle text-light rounded-pill px-2 py-1" id="card-frequency-band">2.4 / 5 ГГц</span>
++            </div>
++            <div class="mt-auto pt-2">
++                <small class="text-muted">Адаптер: <span id="card-interface" class="text-light">—</span></small>
+             </div>
+         </div>
+     </div>
++
++    <!-- Карточка 4: Сигнал -->
+     <div class="col">
+-        <div class="card bg-body-tertiary border-secondary-subtle shadow-sm h-100">
+-            <div class="card-body py-3">
+-                <h6 class="text-uppercase text-muted small fw-bold mb-1">Уровень сигнала</h6>
+-                <h4 class="mb-0 fw-bold" id="card-signal">—</h4>
++        <div class="card glass-card metric-card metric-card-signal h-100 p-3">
++            <div class="d-flex justify-content-between align-items-start mb-2">
++                <span class="text-uppercase text-muted small fw-bold tracking-wider">Уровень сигнала</span>
++                <div class="d-flex align-items-center gap-2">
++                    <div class="wifi-signal-bars signal-level-4" id="wifi-visual-bars">
++                        <span class="bar bar-1"></span>
++                        <span class="bar bar-2"></span>
++                        <span class="bar bar-3"></span>
++                        <span class="bar bar-4"></span>
++                    </div>
++                </div>
++            </div>
++            <h4 class="mb-1 fw-bold text-white" id="card-signal">—</h4>
++            <div class="mt-auto pt-2">
++                <small class="text-muted" id="card-signal-quality">Качество: —</small>
+             </div>
+         </div>
+     </div>
+ </div>
+ 
+-
+-
+-<!-- Навигация по вкладкам Wi-Fi строго по стандарту Bootstrap 5 -->
+-<ul class="nav nav-tabs mb-4" id="wifiTab" role="tablist">
++<!-- Вкладки управления и аналитики -->
++<ul class="nav nav-tabs nav-tabs-modern mb-4" id="wifiTab" role="tablist">
+   <li class="nav-item" role="presentation">
+-    <button class="nav-link active" id="chart-tab" data-bs-toggle="tab" data-bs-target="#chart-tab-pane" type="button" role="tab" aria-controls="chart-tab-pane" aria-selected="true">График радиоэфира</button>
++    <button class="nav-link active d-flex align-items-center gap-2" id="chart-tab" data-bs-toggle="tab" data-bs-target="#chart-tab-pane" type="button" role="tab" aria-controls="chart-tab-pane" aria-selected="true">
++      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
++        <path fill-rule="evenodd" d="M0 0h1v15h15v1H0V0Zm14.817 3.113a.5.5 0 0 1 .07.704l-4.5 5.5a.5.5 0 0 1-.74.037L7.06 6.767l-3.656 5.027a.5.5 0 0 1-.808-.588l4-5.5a.5.5 0 0 1 .758-.06l2.609 2.61 4.15-5.073a.5.5 0 0 1 .704-.07Z"/>
++      </svg>
++      График радиоэфира
++    </button>
+   </li>
+   <li class="nav-item" role="presentation">
+-    <button class="nav-link" id="log-tab" data-bs-toggle="tab" data-bs-target="#log-tab-pane" type="button" role="tab" aria-controls="log-tab-pane" aria-selected="false">История подключений</button>
++    <button class="nav-link d-flex align-items-center gap-2" id="log-tab" data-bs-toggle="tab" data-bs-target="#log-tab-pane" type="button" role="tab" aria-controls="log-tab-pane" aria-selected="false">
++      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
++        <path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM1 3.857C1 3.384 1.448 3 2 3h12c.552 0 1 .384 1 .857v10.286c0 .473-.448.857-1 .857H2c-.552 0-1-.384-1-.857V3.857z"/>
++        <path d="M6.5 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
++      </svg>
++      История подключений
++    </button>
+   </li>
+   <li class="nav-item" role="presentation">
+-    <button class="nav-link" id="config-tab" data-bs-toggle="tab" data-bs-target="#config-tab-pane" type="button" role="tab" aria-controls="config-tab-pane" aria-selected="false">Конфигурация</button>
++    <button class="nav-link d-flex align-items-center gap-2" id="config-tab" data-bs-toggle="tab" data-bs-target="#config-tab-pane" type="button" role="tab" aria-controls="config-tab-pane" aria-selected="false">
++      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
++        <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
++        <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/>
++      </svg>
++      Конфигурация
++    </button>
+   </li>
+ </ul>
+ 
+ <!-- Содержимое вкладок -->
+ <div class="tab-content" id="wifiTabContent">
+-  
++
+   <!-- 1. Вкладка интерактивного графика сигнала -->
+-  <div class="tab-pane fade show active border border-translucent rounded p-4 bg-body-tertiary" id="chart-tab-pane" role="tabpanel" aria-labelledby="chart-tab" tabindex="0">
+-    <h5 class="text-primary fw-bold mb-3">Уровень сигнала Wi-Fi (dBm) в реальном времени</h5>
+-    <div style="position: relative; width: 100%; height: 350px;">
++  <div class="tab-pane fade show active glass-card p-4" id="chart-tab-pane" role="tabpanel" aria-labelledby="chart-tab" tabindex="0">
++    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
++        <div>
++            <h5 class="fw-bold text-white mb-1">Уровень сигнала Wi-Fi (dBm) в реальном времени</h5>
++            <small class="text-muted">Непрерывный мониторинг мощности радиосигнала и затуханий</small>
++        </div>
++
++        <!-- Панель управления графиком -->
++        <div class="d-flex align-items-center flex-wrap gap-2">
++            <div class="btn-group btn-group-sm" role="group" aria-label="Диапазон точек">
++                <button type="button" class="btn btn-outline-secondary active" onclick="setChartPointsLimit(30)">30 точек</button>
++                <button type="button" class="btn btn-outline-secondary" onclick="setChartPointsLimit(60)">60 точек</button>
++                <button type="button" class="btn btn-outline-secondary" onclick="setChartPointsLimit(120)">120 точек</button>
++                <button type="button" class="btn btn-outline-secondary" onclick="setChartPointsLimit(0)">Все</button>
++            </div>
++            <button id="btn-toggle-pause" class="btn btn-sm btn-outline-secondary" onclick="togglePauseLiveStream()">
++                <span id="pause-icon">⏸ Пауза</span>
++            </button>
++            <button class="btn btn-sm btn-outline-info" onclick="refreshWifiAnalytics()">
++                ↻ Обновить
++            </button>
++        </div>
++    </div>
++
++    <!-- Информационная полоса статистики графика -->
++    <div class="d-flex flex-wrap gap-3 mb-3 p-3 rounded-3" style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-subtle);">
++        <div class="small">Текущий: <strong class="text-info" id="chart-stat-current">—</strong></div>
++        <div class="small">Максимум: <strong class="text-success" id="chart-stat-max">—</strong></div>
++        <div class="small">Минимум: <strong class="text-danger" id="chart-stat-min">—</strong></div>
++        <div class="small">Среднее: <strong class="text-warning" id="chart-stat-avg">—</strong></div>
++        <div class="small ms-auto text-muted">Частота обновления: <span class="text-light">каждые 3 сек</span></div>
++    </div>
++
++    <!-- Холст Chart.js -->
++    <div style="position: relative; width: 100%; height: 380px;">
+         <canvas id="wifiSignalChart"></canvas>
+     </div>
+   </div>
+ 
+-  <!-- 2. Вкладка детальной таблицы логов -->
+-  <div class="tab-pane fade border border-translucent rounded p-4 bg-body-tertiary" id="log-tab-pane" role="tabpanel" aria-labelledby="log-tab" tabindex="0">
+-    <h5 class="text-primary fw-bold mb-3">Последние зарегистрированные события Wi-Fi радиоэфира</h5>
+-    <div class="table-responsive" style="max-height: 450px; overflow-y: auto;">
+-        <table class="table table-sm table-hover align-middle m-0">
+-            <thead class="table-dark sticky-top">
++  <!-- 2. Вкладка детальной таблицы логов и истории -->
++  <div class="tab-pane fade glass-card p-4" id="log-tab-pane" role="tabpanel" aria-labelledby="log-tab" tabindex="0">
++    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
++        <div>
++            <h5 class="fw-bold text-white mb-1">История радиоэфира и подключений</h5>
++            <small class="text-muted">Журнал сессий и фиксация изменений параметров сети</small>
++        </div>
++
++        <!-- Кнопки экспорта -->
++        <div class="d-flex align-items-center gap-2">
++            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToCSV()">
++                Экспорт CSV
++            </button>
++            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToJSON()">
++                Экспорт JSON
++            </button>
++        </div>
++    </div>
++
++    <!-- Панель поиска и фильтрации -->
++    <div class="row g-2 mb-3 align-items-center">
++        <div class="col-md-6">
++            <div class="input-group input-group-sm">
++                <span class="input-group-text bg-dark border-secondary text-muted">
++                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
++                        <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
++                    </svg>
++                </span>
++                <input type="text" class="form-control bg-dark border-secondary text-light" id="wifi-search-input" placeholder="Поиск по SSID, BSSID или каналу..." oninput="handleSearchInput()">
++            </div>
++        </div>
++        <div class="col-md-6 text-md-end">
++            <div class="btn-group btn-group-sm" role="group">
++                <button type="button" class="btn btn-outline-secondary active" id="filter-all" onclick="setLogFilter('all')">Все</button>
++                <button type="button" class="btn btn-outline-secondary" id="filter-connected" onclick="setLogFilter('connected')">Подключено</button>
++                <button type="button" class="btn btn-outline-secondary" id="filter-disconnected" onclick="setLogFilter('disconnected')">Сбои / Отключения</button>
++            </div>
++            <span class="ms-3 small text-muted">Записей: <span id="records-counter" class="text-light fw-bold">0</span></span>
++        </div>
++    </div>
++
++    <!-- Таблица событий -->
++    <div class="table-responsive rounded-3 border border-secondary-subtle" style="max-height: 500px; overflow-y: auto;">
++        <table class="table table-modern align-middle m-0" id="wifi-log-table">
++            <thead class="sticky-top">
+                 <tr>
+                     <th>Время события</th>
+                     <th>Сеть (SSID)</th>
+@@ -74,24 +215,36 @@
+                     <th>Стандарт</th>
+                     <th>Скорость (Rx/Tx)</th>
+                     <th>Сигнал</th>
++                    <th>Статус</th>
+                 </tr>
+             </thead>
+-            
+-        <tbody id="wifi-log-table-body">
+-            <!-- НАША ИСПРАВЛЕННАЯ СТРОКА: оригинальный JS ищет именно этот id -->
+-            <tr id="wifi-log-table-loading">
+-                <td colspan="7" class="text-center text-muted py-4">Считывание файла wifi_records.jsonl...</td>
+-            </tr>
+-        </tbody>
+-
++            <tbody id="wifi-log-table-body">
++                <tr id="wifi-log-table-loading">
++                    <td colspan="8" class="text-center text-muted py-5">
++                        <div class="spinner-border spinner-border-sm text-info me-2" role="status"></div>
++                        Считывание телеметрии радиоэфира...
++                    </td>
++                </tr>
++            </tbody>
+         </table>
+     </div>
+   </div>
+-  
++
+   <!-- 3. Вкладка настроек параметров утилиты -->
+-  <div class="tab-pane fade border border-translucent rounded p-4 bg-body-tertiary" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
+-    <h5 class="text-primary fw-bold mb-3">Настройки параметров демона:</h5>
+-    <div id="wifi-custom-config-fields" class="row"></div>
+-    <button class="btn btn-primary btn-sm mt-3" onclick="saveWifiSettings()">Сохранить изменения</button>
++  <div class="tab-pane fade glass-card p-4" id="config-tab-pane" role="tabpanel" aria-labelledby="config-tab" tabindex="0">
++    <div class="mb-4">
++        <h5 class="fw-bold text-white mb-1">Параметры демона Wi-Fi регистратора</h5>
++        <small class="text-muted">Изменение интервала поллинга и порогов фиксации изменений без перезагрузки системы</small>
++    </div>
++
++    <div id="wifi-custom-config-fields" class="row g-3">
++        <!-- Поля формы подгружаются динамически -->
++    </div>
++
++    <div class="mt-4 pt-3 border-top border-secondary-subtle">
++        <button class="btn btn-cyan rounded-pill px-4" onclick="saveWifiSettings()">
++            Сохранить и применить на лету
++        </button>
++    </div>
+   </div>
+ </div>
+diff --git a/utils/wifi/wifi_view.js b/utils/wifi/wifi_view.js
+index 9094a27..1b476dc 100644
+--- a/utils/wifi/wifi_view.js
++++ b/utils/wifi/wifi_view.js
+@@ -1,163 +1,399 @@
++// ==========================================================================
++// GoOverseer Wi-Fi Telemetry & Analytics Logic
++// ==========================================================================
++
+ let wifiChartInstance = null;
+ let lastRenderedTimestamp = "";
++let cachedLogData = [];
++let currentPointsLimit = 30;
++let isPaused = false;
++let currentLogFilter = 'all';
++let searchQuery = '';
+ 
+-// Стартуем опрос при загрузке страницы
+ document.addEventListener("DOMContentLoaded", () => {
+     initWifiChart();
+     refreshWifiAnalytics();
+-    // Проверяем обновления каждые 3 секунды
+-    setInterval(refreshWifiAnalytics, 3000);
++
++    // Периодический опрос каждые 3 секунды
++    setInterval(() => {
++        if (!isPaused) {
++            refreshWifiAnalytics();
++        }
++    }, 3000);
+ });
+ 
++// Инициализация Chart.js графика радиоэфира
+ function initWifiChart() {
+     const ctx = document.getElementById('wifiSignalChart');
+-    if (!ctx || typeof Chart === 'undefined') return;
++    if (!ctx) return;
++
++    if (typeof Chart === 'undefined') {
++        console.warn("Chart.js библиотека еще не загружена или не найдена");
++        return;
++    }
+ 
+-    wifiChartInstance = new Chart(ctx.getContext('2d'), {
++    const canvasCtx = ctx.getContext('2d');
++    const gradient = canvasCtx.createLinearGradient(0, 0, 0, 350);
++    gradient.addColorStop(0, 'rgba(6, 182, 212, 0.35)');
++    gradient.addColorStop(1, 'rgba(6, 182, 212, 0.0)');
++
++    wifiChartInstance = new Chart(canvasCtx, {
+         type: 'line',
+         data: {
+             labels: [],
+             datasets: [{
+-                label: 'Уровень сигнала (dBm)',
+-                data: [], // Сюда Chart.js будет складывать точки
+-                borderColor: '#0d6efd',
+-                backgroundColor: 'rgba(13, 110, 253, 0.05)',
+-                borderWidth: 2,
++                label: 'Мощность сигнала (dBm)',
++                data: [],
++                borderColor: '#06b6d4',
++                backgroundColor: gradient,
++                borderWidth: 2.5,
+                 pointRadius: 2,
+-                tension: 0.2,
++                pointHoverRadius: 6,
++                pointBackgroundColor: '#22d3ee',
++                pointBorderColor: '#0b0f19',
++                pointBorderWidth: 2,
++                tension: 0.35,
+                 fill: true
+             }]
+         },
+         options: {
+             responsive: true,
+             maintainAspectRatio: false,
++            animation: {
++                duration: 400
++            },
++            plugins: {
++                legend: {
++                    display: false
++                },
++                tooltip: {
++                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
++                    titleColor: '#f8fafc',
++                    bodyColor: '#38bdf8',
++                    borderColor: 'rgba(255, 255, 255, 0.1)',
++                    borderWidth: 1,
++                    padding: 10,
++                    boxPadding: 4,
++                    usePointStyle: true,
++                    callbacks: {
++                        label: function(context) {
++                            const val = context.parsed.y;
++                            let quality = "Отличное";
++                            if (val < -80) quality = "Очень слабое";
++                            else if (val < -70) quality = "Удовлетворительное";
++                            else if (val < -60) quality = "Хорошее";
++                            return ` Сигнал: ${val} dBm (${quality})`;
++                        }
++                    }
++                }
++            },
+             scales: {
+-                y: { 
+-                    min: -100, 
++                y: {
++                    min: -100,
+                     max: -30,
+-                    title: { display: true, text: 'dBm (ближе к 0 — лучше)' }
++                    grid: {
++                        color: 'rgba(255, 255, 255, 0.05)'
++                    },
++                    ticks: {
++                        color: '#94a3b8',
++                        stepSize: 10,
++                        callback: function(value) {
++                            return value + ' dBm';
++                        }
++                    },
++                    title: {
++                        display: true,
++                        text: 'Уровень сигнала (dBm)',
++                        color: '#64748b',
++                        font: { size: 11, weight: 'bold' }
++                    }
+                 },
+                 x: {
+-                    title: { display: true, text: 'Время замеров' }
++                    grid: {
++                        color: 'rgba(255, 255, 255, 0.04)'
++                    },
++                    ticks: {
++                        color: '#94a3b8',
++                        maxRotation: 0,
++                        autoSkip: true,
++                        maxTicksLimit: 12
++                    },
++                    title: {
++                        display: true,
++                        text: 'Время замеров',
++                        color: '#64748b',
++                        font: { size: 11, weight: 'bold' }
++                    }
+                 }
+             }
+         }
+     });
+ }
+ 
+-
+ function refreshWifiAnalytics() {
+-    // 1. Для поиска настроек используем нижний регистр ("wifi")
+-    const rawId = new URLSearchParams(window.location.search).get('id');
+-    const idForConfig = rawId ? rawId.toLowerCase() : "wifi";
++    const rawId = new URLSearchParams(window.location.search).get('id') || "WIFI";
+ 
+-    // Отрисовка полей конфигурации
++    // Подгрузка полей конфигурации при первом открытии
+     const fieldsContainer = document.getElementById("wifi-custom-config-fields");
+     if (fieldsContainer && fieldsContainer.children.length === 0) {
+         fieldsContainer.innerHTML = `
+-            <div class="mb-3 col-md-6">
++            <div class="col-md-6">
+                 <label class="form-label text-light small fw-bold">Интервал опроса адаптера (сек)</label>
+-                <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" id="cfg_live_interval_sec" value="5">
++                <div class="input-group input-group-sm">
++                    <input type="number" min="1" max="300" class="form-control bg-dark text-light border-secondary" id="cfg_live_interval_sec" value="5">
++                    <span class="input-group-text bg-dark text-muted border-secondary">сек</span>
++                </div>
++                <div class="form-text text-muted small">Частота считывания данных netsh в фоновом режиме.</div>
+             </div>
+-            <div class="mb-3 col-md-6">
++            <div class="col-md-6">
+                 <label class="form-label text-light small fw-bold">Порог фиксации изменения сигнала (dBm)</label>
+-                <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
++                <div class="input-group input-group-sm">
++                    <input type="number" min="0" max="50" class="form-control bg-dark text-light border-secondary" id="cfg_live_min_signal_drop_dbm" value="5">
++                    <span class="input-group-text bg-dark text-muted border-secondary">dBm</span>
++                </div>
++                <div class="form-text text-muted small">Минимальное колебание сигнала для внеочередной записи.</div>
+             </div>
+         `;
+-        
++
+         fetch(`/api/utils`)
+             .then(res => res.json())
+             .then(utils => {
+-                const wifi = utils.find(u => u.id.toLowerCase() === idForConfig);
++                const wifi = utils.find(u => u.id.toLowerCase() === rawId.toLowerCase());
+                 if (wifi && wifi.settings) {
+                     if (wifi.settings.interval_sec) document.getElementById("cfg_live_interval_sec").value = wifi.settings.interval_sec;
+                     if (wifi.settings.min_signal_drop_dbm) document.getElementById("cfg_live_min_signal_drop_dbm").value = wifi.settings.min_signal_drop_dbm;
+                 }
+-            });
++            })
++            .catch(() => {});
+     }
+ 
+-    // 2. А ДЛЯ СЧИТЫВАНИЯ ЛОГОВ ИЗ ПАПКИ ОТПРАВЛЯЕМ ЗАГЛАВНЫМИ ("WIFI")
+-    const idForLogs = rawId ? rawId.toUpperCase() : "WIFI";
+-    fetch(`/api/utils/logs?id=${idForLogs}`)
++    // Запрос логов телеметрии
++    fetch(`/api/utils/logs?id=${encodeURIComponent(rawId.toUpperCase())}`)
+         .then(res => res.json())
+         .then(data => {
+-            if (data.length > 0) {
+-                const latestEntry = data[data.length - 1];
+-                if (latestEntry.time !== lastRenderedTimestamp || lastRenderedTimestamp === "") {
+-                    renderAnalytics(data);
+-                }
+-            } else {
+-                renderAnalytics([]);
++            if (Array.isArray(data)) {
++                cachedLogData = data;
++                renderAnalytics(data);
+             }
++        })
++        .catch(err => {
++            console.error("Ошибка получения логов:", err);
++            renderAnalytics(cachedLogData);
+         });
+ }
+ 
++// Отрисовка аналитики
+ function renderAnalytics(data) {
+     const tableBody = document.getElementById("wifi-log-table-body");
+-    if (!tableBody || !wifiChartInstance) return;
+-    
+-    // === БЕЗОПАСНОЕ ОБНОВЛЕНИЕ КАРТОЧЕК ЭКСПРЕСС-АНАЛИТИКИ ===
++
++    // Если график еще не был проинициализирован (например, Chart.js догрузился позже)
++    if (!wifiChartInstance && typeof Chart !== 'undefined') {
++        initWifiChart();
++    }
++
++    // 1. ОБНОВЛЕНИЕ КАРТОЧЕК ЭКСПРЕСС-АНАЛИТИКИ
+     if (data && data.length > 0) {
+-        const latestEntry = data[data.length - 1];
+-        
++        const latest = data[data.length - 1];
++
+         const elSsid = document.getElementById("card-ssid");
+         const elBssid = document.getElementById("card-bssid");
+         const elChannel = document.getElementById("card-channel");
+         const elSignal = document.getElementById("card-signal");
++        const elSpeeds = document.getElementById("card-speeds");
++        const elStandard = document.getElementById("card-standard");
++        const elInterface = document.getElementById("card-interface");
++        const elBand = document.getElementById("card-frequency-band");
++        const elQuality = document.getElementById("card-signal-quality");
++        const elBadge = document.getElementById("badge-connection-state");
++        const visualBars = document.getElementById("wifi-visual-bars");
++
++        const isDisconnected = !latest.ssid || latest.ssid === "Disconnected" || latest.state === "отключено";
++
++        if (elSsid) elSsid.innerText = isDisconnected ? "Отключено" : latest.ssid;
++        if (elBssid) elBssid.innerText = latest.bssid || "—";
++        if (elChannel) elChannel.innerText = latest.channel > 0 ? latest.channel : "—";
++        if (elInterface) elInterface.innerText = latest.interface || "Wi-Fi";
++        if (elStandard) elStandard.innerText = `Стандарт: ${latest.standard || '—'}`;
++
++        // Определение диапазона частот
++        if (elBand) {
++            if (latest.channel >= 1 && latest.channel <= 14) {
++                elBand.innerText = "2.4 ГГц";
++                elBand.className = "badge bg-info-subtle text-info rounded-pill px-2 py-1";
++            } else if (latest.channel >= 32 && latest.channel <= 177) {
++                elBand.innerText = "5 ГГц";
++                elBand.className = "badge bg-primary-subtle text-primary rounded-pill px-2 py-1";
++            } else if (latest.channel > 177) {
++                elBand.innerText = "6 ГГц";
++                elBand.className = "badge bg-purple-subtle text-purple rounded-pill px-2 py-1";
++            } else {
++                elBand.innerText = "—";
++            }
++        }
++
++        // Скорости соединения
++        if (elSpeeds) {
++            const rx = latest.rx_rate || 0;
++            const tx = latest.tx_rate || 0;
++            elSpeeds.innerText = `Линк: ⬇ ${rx} Мб / ⬆ ${tx} Мб`;
++        }
+ 
+-        if (elSsid) elSsid.innerText = latestEntry.ssid || "Disconnected";
+-        if (elBssid) elBssid.innerText = latestEntry.bssid || "—";
+-        if (elChannel) elChannel.innerText = latestEntry.channel ?? "—";
+-        
++        // Сигнал и индикатор качества
++        const sig = latest.signal ?? -100;
+         if (elSignal) {
+-            elSignal.innerText = `${latestEntry.signal ?? -100} dBm`;
+-            elSignal.className = "mb-0 fw-bold"; 
+-            if (latestEntry.ssid === "Disconnected") {
+-                elSignal.classList.add("text-danger");
+-            } else if (latestEntry.signal >= -65) {
+-                elSignal.classList.add("text-success");
++            elSignal.innerText = `${sig} dBm`;
++            elSignal.className = "mb-1 fw-bold text-white";
++        }
++
++        // Качество и 4 полоски
++        let qualityPercent = Math.min(100, Math.max(0, (sig + 100) * 2));
++        let qualityText = "Отличное";
++        let barLevel = "signal-level-4";
++
++        if (isDisconnected || sig <= -95) {
++            qualityText = "Нет связи";
++            barLevel = "signal-level-1";
++        } else if (sig <= -80) {
++            qualityText = "Слабый сигнал";
++            barLevel = "signal-level-1";
++        } else if (sig <= -70) {
++            qualityText = "Удовлетворительное";
++            barLevel = "signal-level-2";
++        } else if (sig <= -60) {
++            qualityText = "Хорошее качество";
++            barLevel = "signal-level-3";
++        }
++
++        if (elQuality) {
++            elQuality.innerText = `${qualityText} (${qualityPercent}%)`;
++        }
++
++        if (visualBars) {
++            visualBars.className = `wifi-signal-bars ${barLevel}`;
++        }
++
++        if (elBadge) {
++            if (isDisconnected) {
++                elBadge.className = "badge badge-custom badge-disconnected";
++                elBadge.innerText = "Отключено";
+             } else {
+-                elSignal.classList.add("text-warning");
++                elBadge.className = "badge badge-custom badge-connected";
++                elBadge.innerText = "Связь активна";
+             }
+         }
+     }
+ 
++    // 2. ОБНОВЛЕНИЕ ГРАФИКА CHART.JS
++    if (wifiChartInstance && data && data.length > 0) {
++        let chartData = data;
++        if (currentPointsLimit > 0 && data.length > currentPointsLimit) {
++            chartData = data.slice(-currentPointsLimit);
++        }
++
++        const labels = [];
++        const points = [];
++        let minSig = 0;
++        let maxSig = -120;
++        let sumSig = 0;
++
++        chartData.forEach(entry => {
++            let label = "—";
++            if (entry.time) {
++                label = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
++            }
++            labels.push(label);
++            points.push(entry.signal);
++
++            if (entry.signal > maxSig) maxSig = entry.signal;
++            if (minSig === 0 || entry.signal < minSig) minSig = entry.signal;
++            sumSig += entry.signal;
++        });
++
++        wifiChartInstance.data.labels = labels;
++        wifiChartInstance.data.datasets[0].data = points;
++        wifiChartInstance.update();
++
++        // Обновление полосы статистики
++        const latestSig = points[points.length - 1];
++        const avgSig = Math.round(sumSig / points.length);
++
++        const elStatCurr = document.getElementById("chart-stat-current");
++        const elStatMax = document.getElementById("chart-stat-max");
++        const elStatMin = document.getElementById("chart-stat-min");
++        const elStatAvg = document.getElementById("chart-stat-avg");
++
++        if (elStatCurr) elStatCurr.innerText = `${latestSig} dBm`;
++        if (elStatMax) elStatMax.innerText = `${maxSig} dBm`;
++        if (elStatMin) elStatMin.innerText = `${minSig} dBm`;
++        if (elStatAvg) elStatAvg.innerText = `${avgSig} dBm`;
++    }
++
++    // 3. ОБНОВЛЕНИЕ ТАБЛИЦЫ ИСТОРИИ
++    if (!tableBody) return;
++
++    if (!data || data.length === 0) {
++        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">История подключений пока пуста...</td></tr>`;
++        return;
++    }
++
++    // Применяем фильтры и поиск
++    let filteredData = [...data];
++
++    if (currentLogFilter === 'connected') {
++        filteredData = filteredData.filter(d => d.ssid && d.ssid !== "Disconnected" && d.state !== "отключено");
++    } else if (currentLogFilter === 'disconnected') {
++        filteredData = filteredData.filter(d => !d.ssid || d.ssid === "Disconnected" || d.state === "отключено");
++    }
++
++    if (searchQuery.trim() !== '') {
++        const q = searchQuery.toLowerCase();
++        filteredData = filteredData.filter(d =>
++            (d.ssid && d.ssid.toLowerCase().includes(q)) ||
++            (d.bssid && d.bssid.toLowerCase().includes(q)) ||
++            (String(d.channel).includes(q)) ||
++            (d.time && d.time.toLowerCase().includes(q))
++        );
++    }
++
++    const counterEl = document.getElementById("records-counter");
++    if (counterEl) counterEl.innerText = filteredData.length;
++
+     tableBody.innerHTML = "";
+ 
+-    if (data.length === 0) {
+-        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">Логи пока пусты...</td></tr>`;
++    if (filteredData.length === 0) {
++        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">События по заданному фильтру не найдены.</td></tr>`;
+         return;
+     }
+ 
+-    // А. ОБНОВЛЯЕМ ГРАФИК CHART.JS
+-    wifiChartInstance.data.labels = [];
+-    wifiChartInstance.data.datasets[0].data = [];
++    // Отрисовываем строки таблицы (в обратном порядке - свежие сверху)
++    const reversedData = [...filteredData].reverse();
++    reversedData.forEach((entry, idx) => {
++        const isDisc = !entry.ssid || entry.ssid === "Disconnected" || entry.state === "отключено";
++
++        let statusBadge = `<span class="badge badge-custom badge-connected">Подключено</span>`;
++        let signalClass = "text-success";
+ 
+-    const chartPoints = data.slice(-40);
+-    chartPoints.forEach(entry => {
+-        let labelTime = "—";
+-        if (entry.time) {
+-            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
++        if (isDisc) {
++            statusBadge = `<span class="badge badge-custom badge-disconnected">Отключено</span>`;
++            signalClass = "text-danger";
++        } else if (entry.signal < -75) {
++            signalClass = "text-warning";
+         }
+-        wifiChartInstance.data.labels.push(labelTime);
+-        wifiChartInstance.data.datasets[0].data.push(entry.signal);
+-    });
+-    wifiChartInstance.update();
+ 
+-    // Б. ЗАПОЛНЯЕМ ТАБЛИЦУ
+-    const reversedData = [...data].reverse();
+-    reversedData.forEach(entry => {
+-        let rowClass = entry.ssid === "Disconnected" ? "table-danger" : (entry.signal >= -65 ? "table-success" : "table-warning");
++        const channelBadge = entry.channel > 0
++            ? `<span class="badge bg-secondary-subtle text-light">${entry.channel}</span>`
++            : `<span class="text-muted">—</span>`;
+ 
+         tableBody.innerHTML += `
+-            <tr class="${rowClass}">
+-                <td><code>${entry.time}</code></td>
+-                <td><strong>${entry.ssid}</strong></td>
+-                <td><code>${entry.bssid}</code></td>
+-                <td><span class="badge bg-dark">${entry.channel}</span></td>
+-                <td><small>${entry.standard}</small></td>
+-                <td><small>⬇${entry.rx_rate} / ⬆${entry.tx_rate} Мб</small></td>
+-                <td><strong>${entry.signal} dBm</strong></td>
++            <tr>
++                <td><code>${entry.time || '—'}</code></td>
++                <td><strong class="text-white">${entry.ssid || 'Disconnected'}</strong></td>
++                <td><code class="text-secondary">${entry.bssid || '—'}</code></td>
++                <td>${channelBadge}</td>
++                <td><small class="text-muted">${entry.standard || '—'}</small></td>
++                <td><small class="text-muted">⬇${entry.rx_rate || 0} / ⬆${entry.tx_rate || 0} Мб</small></td>
++                <td><strong class="${signalClass}">${entry.signal ?? -100} dBm</strong></td>
++                <td>${statusBadge}</td>
+             </tr>
+         `;
+     });
+@@ -165,30 +401,123 @@ function renderAnalytics(data) {
+     lastRenderedTimestamp = data[data.length - 1].time;
+ }
+ 
+-// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
++// Управление отображением графика
++function setChartPointsLimit(limit) {
++    currentPointsLimit = limit;
++
++    // Обновляем активный класс на кнопках
++    document.querySelectorAll('[aria-label="Диапазон точек"] button').forEach(btn => {
++        btn.classList.remove('active');
++    });
++    if (event && event.target) {
++        event.target.classList.add('active');
++    }
++
++    renderAnalytics(cachedLogData);
++}
++
++function togglePauseLiveStream() {
++    isPaused = !isPaused;
++    const btnIcon = document.getElementById("pause-icon");
++    if (btnIcon) {
++        btnIcon.innerText = isPaused ? "▶ Возобновить" : "⏸ Пауза";
++    }
++}
++
++// Фильтры и поиск по истории
++function setLogFilter(filter) {
++    currentLogFilter = filter;
++    document.querySelectorAll('#filter-all, #filter-connected, #filter-disconnected').forEach(b => b.classList.remove('active'));
++    const activeBtn = document.getElementById(`filter-${filter}`);
++    if (activeBtn) activeBtn.classList.add('active');
++    renderAnalytics(cachedLogData);
++}
++
++function handleSearchInput() {
++    const input = document.getElementById("wifi-search-input");
++    searchQuery = input ? input.value : "";
++    renderAnalytics(cachedLogData);
++}
++
++// Копирование BSSID в буфер обмена
++function copyBssidToClipboard() {
++    const el = document.getElementById("card-bssid");
++    if (!el || !el.innerText || el.innerText === "—") return;
++
++    navigator.clipboard.writeText(el.innerText).then(() => {
++        if (typeof showToast === 'function') {
++            showToast(`BSSID скопирован: ${el.innerText}`, 'info');
++        } else {
++            alert(`BSSID скопирован: ${el.innerText}`);
++        }
++    });
++}
++
++// Экспорт истории в CSV
++function exportLogsToCSV() {
++    if (!cachedLogData || cachedLogData.length === 0) {
++        alert("Нет данных для экспорта.");
++        return;
++    }
++
++    let csv = "Time,SSID,BSSID,Channel,Standard,RxRate,TxRate,Signal,State\n";
++    cachedLogData.forEach(e => {
++        csv += `"${e.time}","${e.ssid}","${e.bssid}",${e.channel},"${e.standard}",${e.rx_rate},${e.tx_rate},${e.signal},"${e.state}"\n`;
++    });
++
++    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
++    const url = URL.createObjectURL(blob);
++    const link = document.createElement("a");
++    link.setAttribute("href", url);
++    link.setAttribute("download", `wifi_history_${new Date().toISOString().slice(0, 10)}.csv`);
++    document.body.appendChild(link);
++    link.click();
++    document.body.removeChild(link);
++}
++
++// Экспорт истории в JSON
++function exportLogsToJSON() {
++    if (!cachedLogData || cachedLogData.length === 0) {
++        alert("Нет данных для экспорта.");
++        return;
++    }
++
++    const blob = new Blob([JSON.stringify(cachedLogData, null, 2)], { type: 'application/json' });
++    const url = URL.createObjectURL(blob);
++    const link = document.createElement("a");
++    link.setAttribute("href", url);
++    link.setAttribute("download", `wifi_history_${new Date().toISOString().slice(0, 10)}.json`);
++    document.body.appendChild(link);
++    link.click();
++    document.body.removeChild(link);
++}
++
++// Сохранение настроек утилиты
+ function saveWifiSettings() {
+-    const id = new URLSearchParams(window.location.search).get('id');
++    const id = new URLSearchParams(window.location.search).get('id') || "WIFI";
+     const newSettings = {
+-        interval_sec: document.getElementById("cfg_live_interval_sec").value,
+-        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm").value
++        interval_sec: document.getElementById("cfg_live_interval_sec") ? document.getElementById("cfg_live_interval_sec").value : "5",
++        min_signal_drop_dbm: document.getElementById("cfg_live_min_signal_drop_dbm") ? document.getElementById("cfg_live_min_signal_drop_dbm").value : "5"
+     };
+ 
+-    fetch(`/api/utils/save?id=${id}`, {
++    fetch(`/api/utils/save?id=${encodeURIComponent(id)}`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify(newSettings)
+     }).then(res => {
+-        if (res.ok) { alert("Конфигурация успешно сохранена!"); refreshWifiAnalytics(); }
++        if (res.ok) {
++            if (typeof showToast === 'function') {
++                showToast("Конфигурация успешно сохранена и применена на лету!", 'success');
++            } else {
++                alert("Конфигурация успешно сохранена!");
++            }
++            refreshWifiAnalytics();
++        } else {
++            if (typeof showToast === 'function') {
++                showToast("Не удалось сохранить конфигурацию", 'danger');
++            } else {
++                alert("Ошибка сохранения конфигурации");
++            }
++        }
+     });
+ }
+-
+-// ДЛЯ КНОПКИ ВЫГРУЗКИ из ДЕМОНОВ:
+-function shutdownServer() {
+-        if (confirm("Вы уверены, что хотите полностью остановить оркестратор и закрыть сервер?")) {
+-            fetch('/api/shutdown', { method: 'POST' })
+-                .then(() => {
+-                    alert("Оркестратор остановлен. Окно можно закрыть.");
+-                    window.close();
+-            });
+-}
+-}
+diff --git a/utils/wifi/wifi_worker.go b/utils/wifi/wifi_worker.go
+index 67f355e..0786126 100644
+--- a/utils/wifi/wifi_worker.go
++++ b/utils/wifi/wifi_worker.go
+@@ -4,6 +4,7 @@ import (
+ 	"encoding/json"
+ 	"io"
+ 	"log"
++	"math"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+@@ -15,7 +16,7 @@ import (
+ 	"golang.org/x/text/encoding/charmap"
+ )
+ 
+-// Наша расширенная структура данных (строго по ТЗ)
++// Расширенная структура данных Wi-Fi телеметрии
+ type WifiData struct {
+ 	Time      string `json:"time"`
+ 	Interface string `json:"interface"`
+@@ -29,22 +30,21 @@ type WifiData struct {
+ 	State     string `json:"state"`
+ }
+ 
+-// Простая структура для чтения интервала
++// Структура конфигурации демона
+ type Config struct {
+-	IntervalSec string `json:"interval_sec"`
++	IntervalSec      string `json:"interval_sec"`
++	MinSignalDropDbm string `json:"min_signal_drop_dbm"`
+ }
+ 
+ func main() {
+-	// 1. Определяем рабочую директорию демона.
+-	// Так как он запускается из автозагрузки, os.Getwd() вернет C:\Windows\System32.
+-	// Поэтому мы явно вычисляем путь к папке, где лежит сам исполняемый файл в %APPDATA%
++	// 1. Вычисляем путь к рабочей директории демона в %APPDATA%\GoOverseer\WIFI
+ 	exePath, err := os.Executable()
+ 	if err != nil {
+ 		os.Exit(1)
+ 	}
+ 	workDir := filepath.Dir(exePath)
+ 
+-	// Настраиваем системный логгер демона для отладки ошибок
++	// Настраиваем системный логгер демона для отладки
+ 	logFile, _ := os.OpenFile(filepath.Join(workDir, "wifi_daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+ 	if logFile != nil {
+ 		log.SetOutput(logFile)
+@@ -54,9 +54,16 @@ func main() {
+ 	configPath := filepath.Join(workDir, "config.json")
+ 	recordsPath := filepath.Join(workDir, "wifi_records.jsonl")
+ 
++	var lastSignal int32 = -999
++	var lastSSID string = ""
++	var lastState string = ""
++	var lastRecordTime time.Time
++
+ 	for {
+-		// 2. Читаем актуальные настройки из config.json на каждом шаге цикла
+-		interval := 5 // дефолтное значение
++		// 2. Читаем актуальные настройки из config.json
++		interval := 5
++		minDropDbm := 0
++
+ 		cfgData, err := os.ReadFile(configPath)
+ 		if err == nil {
+ 			var cfg Config
+@@ -64,28 +71,62 @@ func main() {
+ 				if val, err := strconv.Atoi(cfg.IntervalSec); err == nil && val > 0 {
+ 					interval = val
+ 				}
++				if val, err := strconv.Atoi(cfg.MinSignalDropDbm); err == nil && val > 0 {
++					minDropDbm = val
++				}
+ 			}
+ 		}
+ 
+-		// 3. Собираем расширенные данные Wi-Fi
++		// 3. Считываем данные Wi-Fi адаптера через netsh
+ 		currentData := parseWindowsWifi()
+ 
+-		// 4. Записываем в текстовый jsonl-файл
+-		jsonData, err := json.Marshal(currentData)
+-		if err == nil {
+-			f, err := os.OpenFile(recordsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
++		// 4. Проверяем условие логирования:
++		// Если порог minDropDbm задан, пишем при изменении сигнала >= порога,
++		// при смене сети/состояния или принудительно раз в 30 секунд (heartbeat для живого графика)
++		shouldWrite := true
++		if minDropDbm > 0 && lastSignal != -999 {
++			diff := int(math.Abs(float64(currentData.Signal - lastSignal)))
++			stateChanged := currentData.SSID != lastSSID || currentData.State != lastState
++			heartbeatExpired := time.Since(lastRecordTime) >= 30*time.Second
++
++			if diff < minDropDbm && !stateChanged && !heartbeatExpired {
++				shouldWrite = false
++			}
++		}
++
++		if shouldWrite {
++			jsonData, err := json.Marshal(currentData)
+ 			if err == nil {
+-				_, _ = io.WriteString(f, string(jsonData)+"\n")
+-				f.Close()
++				f, err := os.OpenFile(recordsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
++				if err == nil {
++					_, _ = io.WriteString(f, string(jsonData)+"\n")
++					f.Close()
++				}
+ 			}
++			lastSignal = currentData.Signal
++			lastSSID = currentData.SSID
++			lastState = currentData.State
++			lastRecordTime = time.Now()
+ 		}
+ 
+-		// Спим столько секунд, сколько указано в конфиге
+ 		time.Sleep(time.Duration(interval) * time.Second)
+ 	}
+ }
+ 
+-// Наш надежный парсер netsh без кракозябр
++// Парсинг дробных скоростей (например, "866.7" Мбит/с или "144,4")
++func parseRate(val string) int32 {
++	val = strings.TrimSpace(val)
++	val = strings.ReplaceAll(val, ",", ".")
++	if f, err := strconv.ParseFloat(val, 64); err == nil {
++		return int32(math.Round(f))
++	}
++	if i, err := strconv.Atoi(val); err == nil {
++		return int32(i)
++	}
++	return 0
++}
++
++// Парсер netsh wlan show interfaces
+ func parseWindowsWifi() WifiData {
+ 	res := WifiData{
+ 		Time:      time.Now().Format("2006-01-02 15:04:05"),
+@@ -101,8 +142,6 @@ func parseWindowsWifi() WifiData {
+ 	}
+ 
+ 	cmd := exec.Command("netsh", "wlan", "show", "interfaces")
+-
+-	// ИСПРАВЛЕНО: ЖЕСТКО ЗАПРЕЩАЕМ WINDOWS ПОКАЗЫВАТЬ ОКНО КОНСОЛИ ДЛЯ NETSH
+ 	cmd.SysProcAttr = &syscall.SysProcAttr{
+ 		HideWindow: true,
+ 	}
+@@ -112,9 +151,17 @@ func parseWindowsWifi() WifiData {
+ 		return res
+ 	}
+ 
++	// Декодируем OEM CP866 вывод Windows консоли
+ 	decoder := charmap.CodePage866.NewDecoder()
+-	utf8Bytes, _ := decoder.Bytes(out)
+-	lines := strings.Split(string(utf8Bytes), "\n")
++	utf8Bytes, err := decoder.Bytes(out)
++	var rawStr string
++	if err == nil {
++		rawStr = string(utf8Bytes)
++	} else {
++		rawStr = string(out)
++	}
++
++	lines := strings.Split(rawStr, "\n")
+ 
+ 	for _, line := range lines {
+ 		line = strings.TrimSpace(line)
+@@ -139,12 +186,10 @@ func parseWindowsWifi() WifiData {
+ 		case key == "Канал" || key == "Channel":
+ 			ch, _ := strconv.Atoi(val)
+ 			res.Channel = int32(ch)
+-		case key == "Прием (Мбит/с)" || key == "Receive rate (Mbps)":
+-			rate, _ := strconv.Atoi(val)
+-			res.RxRate = int32(rate)
+-		case key == "Передача (Мбит/с)" || key == "Transmit rate (Mbps)":
+-			rate, _ := strconv.Atoi(val)
+-			res.TxRate = int32(rate)
++		case strings.Contains(key, "Прием") || strings.Contains(key, "Receive rate"):
++			res.RxRate = parseRate(val)
++		case strings.Contains(key, "Передача") || strings.Contains(key, "Transmit rate"):
++			res.TxRate = parseRate(val)
+ 		case key == "Сигнал" || key == "Signal":
+ 			val = strings.TrimSuffix(val, "%")
+ 			pct, _ := strconv.Atoi(val)
+diff --git a/web/handlers.go b/web/handlers.go
+index 80a5bbd..df0b5f6 100644
+--- a/web/handlers.go
++++ b/web/handlers.go
+@@ -9,8 +9,10 @@ import (
+ 	"net/http"
+ 	"os"
+ 	"os/exec"
++	"path"
+ 	"path/filepath"
+ 	"strings"
++	"time"
+ 
+ 	"golang.org/x/sys/windows/registry"
+ )
+@@ -125,25 +127,29 @@ func copyFile(src, dst string) error {
+ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 	mux := http.NewServeMux()
+ 
+-	// НАДЕЖНЫЙ СТАТИК-ОБРАБОТЧИК: Исправляет MIME-типы под Windows раз и навсегда
++	// Статический файловый сервер
+ 	staticFS := GetStaticFS()
+ 	fileServer := http.FileServer(http.FS(staticFS))
+ 
+ 	mux.HandleFunc("GET /static/", func(w http.ResponseWriter, r *http.Request) {
+-		filePath := r.URL.Path
++		ext := strings.ToLower(path.Ext(r.URL.Path))
+ 
+-		// Перехватываем заголовки и выставляем их вручную ПЕРЕД вызовом сервера
+-		if strings.HasSuffix(filePath, ".js") {
++		switch ext {
++		case ".js":
+ 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+-		} else if strings.HasSuffix(filePath, ".css") {
++		case ".css":
+ 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+-		} else if strings.HasSuffix(filePath, ".png") {
++		case ".png":
+ 			w.Header().Set("Content-Type", "image/png")
++		case ".svg":
++			w.Header().Set("Content-Type", "image/svg+xml")
++		case ".ico":
++			w.Header().Set("Content-Type", "image/x-icon")
++		case ".json":
++			w.Header().Set("Content-Type", "application/json")
+ 		}
+ 
+ 		w.Header().Set("X-Content-Type-Options", "nosniff")
+-
+-		// Отдаем файл
+ 		http.StripPrefix("/static/", fileServer).ServeHTTP(w, r)
+ 	})
+ 
+@@ -182,7 +188,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		utilsList, _ := ScanUtils()
+ 		var target *UtilityInfo
+ 		for i := range utilsList {
+-			if utilsList[i].ID == id {
++			if strings.EqualFold(utilsList[i].ID, id) {
+ 				target = &utilsList[i]
+ 				break
+ 			}
+@@ -236,7 +242,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		utilsList, _ := ScanUtils()
+ 		var target *UtilityInfo
+ 		for i := range utilsList {
+-			if utilsList[i].ID == id {
++			if strings.EqualFold(utilsList[i].ID, id) {
+ 				target = &utilsList[i]
+ 				break
+ 			}
+@@ -247,17 +253,26 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 			return
+ 		}
+ 
++		// Завершаем процесс демона
+ 		_ = exec.Command("taskkill", "/F", "/IM", target.ExeName).Run()
+ 
++		// Удаляем ключ из автозагрузки Windows
+ 		k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+ 		if err == nil {
+ 			_ = k.DeleteValue("GoOverseer_" + target.ID)
+ 			k.Close()
+ 		}
+ 
++		// Очищаем директорию с паузой для снятия файловой блокировки Windows
+ 		appDataDir, _ := os.UserConfigDir()
+ 		liveDir := filepath.Join(appDataDir, "GoOverseer", target.ID)
+-		_ = os.RemoveAll(liveDir)
++
++		for attempt := 0; attempt < 3; attempt++ {
++			time.Sleep(150 * time.Millisecond)
++			if err := os.RemoveAll(liveDir); err == nil {
++				break
++			}
++		}
+ 
+ 		w.WriteHeader(http.StatusOK)
+ 		_, _ = w.Write([]byte("Deactivated successfully"))
+@@ -311,7 +326,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		utilsList, _ := ScanUtils()
+ 		var target *UtilityInfo
+ 		for i := range utilsList {
+-			if utilsList[i].ID == id {
++			if strings.EqualFold(utilsList[i].ID, id) {
+ 				target = &utilsList[i]
+ 				break
+ 			}
+@@ -349,6 +364,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		_ = baseTmpl.Execute(w, data)
+ 	})
+ 
++	// Считывание логов телеметрии
+ 	mux.HandleFunc("GET /api/utils/logs", func(w http.ResponseWriter, r *http.Request) {
+ 		w.Header().Set("Content-Type", "application/json")
+ 		id := r.URL.Query().Get("id")
+@@ -360,7 +376,7 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		utilsList, _ := ScanUtils()
+ 		var target *UtilityInfo
+ 		for i := range utilsList {
+-			if utilsList[i].ID == id {
++			if strings.EqualFold(utilsList[i].ID, id) {
+ 				target = &utilsList[i]
+ 				break
+ 			}
+@@ -374,26 +390,45 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		appDataDir, _ := os.UserConfigDir()
+ 		logFilePath := filepath.Join(appDataDir, "GoOverseer", target.ID, target.LogFile)
+ 
+-		file, err := os.ReadFile(logFilePath)
++		fileInfo, err := os.Stat(logFilePath)
+ 		if err != nil {
+ 			_, _ = w.Write([]byte("[]"))
+ 			return
+ 		}
+-		lines := strings.Split(string(file), "\n")
++
++		// Если файл очень большой, читаем только хвост (последние 256 КБ)
++		var fileBytes []byte
++		if fileInfo.Size() > 256*1024 {
++			f, err := os.Open(logFilePath)
++			if err == nil {
++				_, _ = f.Seek(-256*1024, io.SeekEnd)
++				fileBytes, _ = io.ReadAll(f)
++				f.Close()
++			}
++		} else {
++			fileBytes, _ = os.ReadFile(logFilePath)
++		}
++
++		lines := strings.Split(string(fileBytes), "\n")
+ 		var validJSONLines []string
++
+ 		for _, line := range lines {
+ 			trimmed := strings.TrimSpace(line)
+-			if trimmed != "" {
++			if trimmed != "" && json.Valid([]byte(trimmed)) {
+ 				validJSONLines = append(validJSONLines, trimmed)
+ 			}
+ 		}
+-		if len(validJSONLines) > 300 {
+-			validJSONLines = validJSONLines[len(validJSONLines)-300:]
++
++		// Ограничиваем выдачу последними 500 записями
++		if len(validJSONLines) > 500 {
++			validJSONLines = validJSONLines[len(validJSONLines)-500:]
+ 		}
++
+ 		responseJSON := "[" + strings.Join(validJSONLines, ",") + "]"
+ 		_, _ = w.Write([]byte(responseJSON))
+ 	})
+-	// Роут для скриптов аналитики со склада
++
++	// Роут для скриптов аналитики
+ 	mux.HandleFunc("GET /static/js/utils/", func(w http.ResponseWriter, r *http.Request) {
+ 		pathParts := strings.Split(r.URL.Path, "/")
+ 		if len(pathParts) == 0 {
+@@ -423,5 +458,6 @@ func SetupHandlers(shutdownCtxCancel func()) *http.ServeMux {
+ 		_, _ = w.Write([]byte("Stopping..."))
+ 		go shutdownCtxCancel()
+ 	})
++
+ 	return mux
+ }
+diff --git a/web/static/css/app.css b/web/static/css/app.css
+index e69de29..4f6468a 100644
+--- a/web/static/css/app.css
++++ b/web/static/css/app.css
+@@ -0,0 +1,304 @@
++/* ==========================================================================
++   GoOverseer Modern UI Dashboard Theme
++   Dark Cyber/Glassmorphism Design System
++   ========================================================================== */
++
++:root {
++  --bg-app: #0b0f19;
++  --bg-surface: rgba(17, 24, 39, 0.75);
++  --bg-surface-elevated: rgba(31, 41, 55, 0.8);
++  --bg-surface-hover: rgba(37, 49, 66, 0.85);
++  --border-subtle: rgba(255, 255, 255, 0.08);
++  --border-active: rgba(6, 182, 212, 0.4);
++
++  --accent-cyan: #06b6d4;
++  --accent-cyan-glow: rgba(6, 182, 212, 0.25);
++  --accent-blue: #3b82f6;
++  --accent-blue-glow: rgba(59, 130, 246, 0.25);
++  --accent-emerald: #10b981;
++  --accent-emerald-glow: rgba(16, 185, 129, 0.25);
++  --accent-amber: #f59e0b;
++  --accent-rose: #f43f5e;
++
++  --text-main: #f8fafc;
++  --text-muted: #94a3b8;
++  --text-dim: #64748b;
++
++  --radius-lg: 16px;
++  --radius-md: 12px;
++  --radius-sm: 8px;
++
++  --shadow-card: 0 10px 30px -5px rgba(0, 0, 0, 0.4), 0 0 1px 1px rgba(255, 255, 255, 0.05);
++  --shadow-glow-cyan: 0 0 20px -3px rgba(6, 182, 212, 0.35);
++}
++
++/* Общий стиль страницы */
++body {
++  background-color: var(--bg-app) !important;
++  color: var(--text-main) !important;
++  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", sans-serif;
++  min-height: 100vh;
++  background-image:
++    radial-gradient(at 0% 0%, rgba(6, 182, 212, 0.06) 0px, transparent 50%),
++    radial-gradient(at 100% 0%, rgba(59, 130, 246, 0.06) 0px, transparent 50%),
++    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.04) 0px, transparent 50%);
++  background-attachment: fixed;
++}
++
++/* Навигационная панель */
++.navbar-custom {
++  background: rgba(11, 15, 25, 0.85) !important;
++  backdrop-filter: blur(16px);
++  -webkit-backdrop-filter: blur(16px);
++  border-bottom: 1px solid var(--border-subtle) !important;
++  transition: all 0.3s ease;
++}
++
++.brand-glow {
++  transition: transform 0.2s ease, filter 0.2s ease;
++}
++.brand-glow:hover {
++  transform: translateY(-1px);
++  filter: drop-shadow(0 0 8px var(--accent-cyan));
++}
++
++/* Пульсирующий индикатор онлайна */
++.pulse-dot {
++  display: inline-block;
++  width: 8px;
++  height: 8px;
++  border-radius: 50%;
++  background-color: var(--accent-emerald);
++  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
++  animation: pulseGreen 2s infinite;
++}
++
++@keyframes pulseGreen {
++  0% {
++    transform: scale(0.95);
++    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
++  }
++  70% {
++    transform: scale(1);
++    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
++  }
++  100% {
++    transform: scale(0.95);
++    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
++  }
++}
++
++/* Стеклянные карточки (Glassmorphism) */
++.glass-card {
++  background: var(--bg-surface) !important;
++  backdrop-filter: blur(12px);
++  -webkit-backdrop-filter: blur(12px);
++  border: 1px solid var(--border-subtle) !important;
++  border-radius: var(--radius-lg) !important;
++  box-shadow: var(--shadow-card);
++  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
++}
++
++.glass-card:hover {
++  border-color: rgba(255, 255, 255, 0.14) !important;
++  box-shadow: 0 14px 35px -5px rgba(0, 0, 0, 0.5);
++}
++
++.glass-card-interactive:hover {
++  transform: translateY(-2px);
++  border-color: var(--border-active) !important;
++}
++
++/* Карточки экспресс-метрик Wi-Fi */
++.metric-card {
++  position: relative;
++  overflow: hidden;
++}
++
++.metric-card::before {
++  content: "";
++  position: absolute;
++  top: 0;
++  left: 0;
++  width: 4px;
++  height: 100%;
++  background: var(--accent-cyan);
++  opacity: 0.7;
++  border-radius: 2px 0 0 2px;
++}
++
++.metric-card-ssid::before { background: var(--accent-cyan); }
++.metric-card-bssid::before { background: var(--accent-blue); }
++.metric-card-channel::before { background: #8b5cf6; }
++.metric-card-signal::before { background: var(--accent-emerald); }
++
++.metric-icon-bubble {
++  width: 42px;
++  height: 42px;
++  border-radius: var(--radius-md);
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  background: rgba(255, 255, 255, 0.05);
++  border: 1px solid var(--border-subtle);
++  color: var(--text-main);
++}
++
++/* Индикатор мощности Wi-Fi сигнала (4 полоски) */
++.wifi-signal-bars {
++  display: inline-flex;
++  align-items: flex-end;
++  gap: 3px;
++  height: 20px;
++  vertical-align: middle;
++}
++
++.wifi-signal-bars .bar {
++  width: 4px;
++  border-radius: 2px;
++  background-color: rgba(255, 255, 255, 0.15);
++  transition: height 0.3s ease, background-color 0.3s ease;
++}
++
++.wifi-signal-bars .bar-1 { height: 6px; }
++.wifi-signal-bars .bar-2 { height: 10px; }
++.wifi-signal-bars .bar-3 { height: 15px; }
++.wifi-signal-bars .bar-4 { height: 20px; }
++
++.wifi-signal-bars.signal-level-4 .bar { background-color: var(--accent-emerald); box-shadow: 0 0 6px var(--accent-emerald-glow); }
++.wifi-signal-bars.signal-level-3 .bar-1,
++.wifi-signal-bars.signal-level-3 .bar-2,
++.wifi-signal-bars.signal-level-3 .bar-3 { background-color: var(--accent-cyan); box-shadow: 0 0 6px var(--accent-cyan-glow); }
++.wifi-signal-bars.signal-level-2 .bar-1,
++.wifi-signal-bars.signal-level-2 .bar-2 { background-color: var(--accent-amber); }
++.wifi-signal-bars.signal-level-1 .bar-1 { background-color: var(--accent-rose); }
++
++/* Вкладки (Tabs) */
++.nav-tabs-modern {
++  border-bottom: 1px solid var(--border-subtle);
++  gap: 8px;
++}
++
++.nav-tabs-modern .nav-link {
++  color: var(--text-muted);
++  border: 1px solid transparent;
++  border-radius: var(--radius-md) var(--radius-md) 0 0;
++  padding: 10px 20px;
++  font-weight: 600;
++  background: transparent;
++  transition: all 0.2s ease;
++}
++
++.nav-tabs-modern .nav-link:hover {
++  color: var(--text-main);
++  background: rgba(255, 255, 255, 0.03);
++  border-color: transparent;
++}
++
++.nav-tabs-modern .nav-link.active {
++  color: var(--accent-cyan) !important;
++  background: var(--bg-surface) !important;
++  border: 1px solid var(--border-subtle) !important;
++  border-bottom-color: var(--bg-surface) !important;
++  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
++}
++
++/* Современная таблица истории */
++.table-modern {
++  margin-bottom: 0;
++  color: var(--text-main);
++}
++
++.table-modern thead th {
++  background: rgba(15, 23, 42, 0.95) !important;
++  color: var(--text-muted);
++  font-weight: 600;
++  font-size: 0.8rem;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  padding: 12px 14px;
++  border-bottom: 1px solid var(--border-subtle) !important;
++}
++
++.table-modern tbody tr {
++  transition: background-color 0.15s ease;
++}
++
++.table-modern tbody tr:hover {
++  background-color: var(--bg-surface-hover) !important;
++}
++
++.table-modern td {
++  padding: 12px 14px;
++  vertical-align: middle;
++  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
++}
++
++/* Полоса прокрутки */
++::-webkit-scrollbar {
++  width: 8px;
++  height: 8px;
++}
++::-webkit-scrollbar-track {
++  background: rgba(0, 0, 0, 0.2);
++}
++::-webkit-scrollbar-thumb {
++  background: rgba(255, 255, 255, 0.15);
++  border-radius: 4px;
++}
++::-webkit-scrollbar-thumb:hover {
++  background: rgba(255, 255, 255, 0.25);
++}
++
++/* Бейджи */
++.badge-custom {
++  font-weight: 600;
++  padding: 6px 10px;
++  border-radius: 6px;
++  letter-spacing: 0.02em;
++}
++
++.badge-connected {
++  background: rgba(16, 185, 129, 0.15);
++  color: #34d399;
++  border: 1px solid rgba(16, 185, 129, 0.3);
++}
++
++.badge-disconnected {
++  background: rgba(244, 63, 94, 0.15);
++  color: #fb7185;
++  border: 1px solid rgba(244, 63, 94, 0.3);
++}
++
++/* Кнопки */
++.btn-cyan {
++  background: linear-gradient(135deg, var(--accent-cyan), #0284c7);
++  color: #fff;
++  border: none;
++  font-weight: 600;
++  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.3);
++  transition: all 0.2s ease;
++}
++.btn-cyan:hover {
++  background: linear-gradient(135deg, #22d3ee, #0369a1);
++  color: #fff;
++  transform: translateY(-1px);
++  box-shadow: 0 6px 18px rgba(6, 182, 212, 0.4);
++}
++
++/* Тост-уведомления */
++.toast-container-custom {
++  position: fixed;
++  bottom: 24px;
++  right: 24px;
++  z-index: 1100;
++}
++
++.toast-custom {
++  background: rgba(17, 24, 39, 0.95);
++  backdrop-filter: blur(12px);
++  border: 1px solid var(--border-subtle);
++  border-radius: var(--radius-md);
++  color: var(--text-main);
++  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
++}
+diff --git a/web/static/js/app.js b/web/static/js/app.js
+index 06f6584..d53597e 100644
+--- a/web/static/js/app.js
++++ b/web/static/js/app.js
+@@ -1,83 +1,149 @@
+-// Функция плавного выключения всего оркестратора
+-function shutdownServer() {
+-    if (confirm("Вы уверены, что хотите полностью остановить оркестратор и закрыть сервер?")) {
+-        fetch('/api/shutdown', { method: 'POST' })
+-            .then(() => {
+-                alert("Оркестратор остановлен. Окно можно закрыть.");
+-                window.close();
+-            });
++// ==========================================================================
++// GoOverseer Main Web Application Script
++// ==========================================================================
++
++function showToast(message, type = 'info') {
++    const container = document.getElementById('toastContainer');
++    if (!container) return;
++
++    const bgClass = type === 'success' ? 'border-success text-success' :
++                    type === 'danger' ? 'border-danger text-danger' :
++                    'border-info text-info';
++
++    const toastEl = document.createElement('div');
++    toastEl.className = `toast toast-custom align-items-center ${bgClass} border show mb-2`;
++    toastEl.setAttribute('role', 'alert');
++    toastEl.setAttribute('aria-live', 'assertive');
++    toastEl.setAttribute('aria-atomic', 'true');
++
++    toastEl.innerHTML = `
++        <div class="d-flex">
++            <div class="toast-body fw-semibold text-white">
++                ${message}
++            </div>
++            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
++        </div>
++    `;
++
++    container.appendChild(toastEl);
++    setTimeout(() => {
++        toastEl.classList.remove('show');
++        setTimeout(() => toastEl.remove(), 300);
++    }, 4000);
++}
++
++function confirmShutdown() {
++    const modalEl = document.getElementById('shutdownModal');
++    if (modalEl && window.bootstrap) {
++        const modal = new bootstrap.Modal(modalEl);
++        modal.show();
++    } else if (confirm("Остановить оркестратор GoOverseer?")) {
++        executeShutdown();
+     }
+ }
+ 
+-// Запуск сканирования и построения интерфейса при загрузке страницы
++function executeShutdown() {
++    fetch('/api/shutdown', { method: 'POST' })
++        .then(() => {
++            document.body.innerHTML = `
++                <div class="d-flex align-items-center justify-content-center vh-100 bg-dark text-white text-center p-4">
++                    <div>
++                        <h2 class="mb-3 text-danger">Оркестратор GoOverseer остановлен</h2>
++                        <p class="text-muted">Сервер успешно завершил работу. Вкладку браузера можно закрыть.</p>
++                    </div>
++                </div>
++            `;
++        });
++}
++
+ document.addEventListener("DOMContentLoaded", () => {
+     loadUtilities();
+ });
+ 
+ function loadUtilities() {
+     const container = document.getElementById("utils-container");
++    if (!container) return;
+ 
+     fetch('/api/utils')
+         .then(response => response.json())
+         .then(utils => {
+-            container.innerHTML = ""; // Очищаем спиннер загрузки
++            container.innerHTML = "";
+ 
+-            if (utils.length === 0) {
+-                container.innerHTML = `<div class="col w-100 text-center text-muted">Доступные утилиты в папке utils/ не обнаружены.</div>`;
++            if (!utils || utils.length === 0) {
++                container.innerHTML = `
++                    <div class="col-12 text-center py-5 glass-card">
++                        <div class="text-muted fs-5">Доступные модули в директории utils/ не обнаружены.</div>
++                    </div>`;
+                 return;
+             }
+ 
+             utils.forEach(util => {
+-                // Создаем колонку для карточки утилиты
+                 const col = document.createElement("div");
+                 col.className = "col-12";
+ 
+-                // Настраиваем стили и элементы в зависимости от статуса активности утилиты
+-                let statusBadge = `<span class="badge bg-secondary">Не активен</span>`;
+-                let actionButton = `<button class="btn btn-success" onclick="activateUtil('${util.id}')">Активировать модуль</button>`;
+-                let settingsBlock = ""; // По умолчанию блок настроек пустой (не показывается)
++                let statusBadge = `
++                    <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill">
++                        Не активен
++                    </span>`;
++
++                let actionButton = `
++                    <button class="btn btn-cyan btn-sm rounded-pill px-4 py-2" onclick="activateUtil('${util.id}')">
++                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
++                            <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
++                            <path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
++                        </svg>
++                        Активировать модуль
++                    </button>`;
+ 
+                 if (util.active) {
+-                    statusBadge = `<span class="badge bg-success">Активен (В автозагрузке)</span>`;
+-                    
+-                    // Проверяем, задан ли у утилиты тип отображения аналитики
++                    statusBadge = `
++                        <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill d-inline-flex align-items-center gap-2">
++                            <span class="pulse-dot"></span>
++                            Активен (В автозагрузке)
++                        </span>`;
++
+                     let viewButton = "";
+                     if (util.view_type && util.view_type !== "") {
+-                        viewButton = `<a href="/utils/view?id=${util.id}" class="btn btn-primary">Панель аналитики</a>`;
++                        viewButton = `
++                            <a href="/utils/view?id=${util.id}" class="btn btn-cyan btn-sm rounded-pill px-3 py-2">
++                                <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
++                                    <path d="M0 0h1v15h15v1H0V0Zm10 3.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V4.707l-4.146 4.147a.5.5 0 0 1-.708 0L7 6.707l-3.646 3.647a.5.5 0 0 1-.708-.708l4-4a.5.5 0 0 1 .708 0L9.5 7.793l3.646-3.647L11 4.146a.5.5 0 0 1-.5-.5Z"/>
++                                </svg>
++                                Панель аналитики
++                            </a>`;
+                     }
+ 
+-                    // Формируем две аккуратные кнопки по вашему ТЗ
+                     actionButton = `
+-                        <div class="d-flex gap-2">
++                        <div class="d-flex flex-wrap gap-2">
+                             ${viewButton}
+-                            <button class="btn btn-outline-danger" onclick="deactivateUtil('${util.id}')">Деактивировать модуль</button>
++                            <button class="btn btn-outline-danger btn-sm rounded-pill px-3 py-2" onclick="deactivateUtil('${util.id}')">
++                                Деактивировать
++                            </button>
+                         </div>
+                     `;
+                 }
+ 
+-
+-                // Собираем Bootstrap-карточку утилиты
+                 col.innerHTML = `
+-                    <div class="card shadow-sm border border-translucent">
++                    <div class="card glass-card glass-card-interactive">
+                         <div class="card-body p-4">
+-                            <div class="d-flex justify-content-between align-items-start mb-3">
++                            <div class="d-flex flex-column flex-md-row justify-content-between align-items-start gap-3 mb-3">
+                                 <div>
+-                                    <h4 class="card-title fw-bold m-0 d-flex align-items-center">
+-                                        ${util.name}
+-                                        <div class="ms-3">${statusBadge}</div>
+-                                    </h4>
+-                                    <p class="card-text text-muted mt-2">${util.description}</p>
++                                    <div class="d-flex align-items-center flex-wrap gap-3">
++                                        <h4 class="card-title fw-bold m-0 text-white">${util.name}</h4>
++                                        <div>${statusBadge}</div>
++                                    </div>
++                                    <p class="card-text text-muted mt-2 mb-0">${util.description}</p>
+                                 </div>
+-                                <div>
++                                <div class="align-self-start align-self-md-center">
+                                     ${actionButton}
+                                 </div>
+                             </div>
+-                            <div class="text-muted small">
+-                                <span>Файл логов: <code class="text-info">${util.log_file}</code></span>
+-                                <span class="ms-4">Процесс Windows: <code class="text-warning">${util.exe_name}</code></span>
++                            <div class="d-flex flex-wrap gap-4 pt-3 border-top border-secondary-subtle text-muted small">
++                                <div>Журнал: <code class="text-info">${util.log_file}</code></div>
++                                <div>Процесс: <code class="text-warning">${util.exe_name}</code></div>
++                                <div>Режим: <span class="text-light">${util.view_type || 'Стандарт'}</span></div>
+                             </div>
+                         </div>
+-                        ${settingsBlock}
+                     </div>
+                 `;
+ 
+@@ -85,62 +151,37 @@ function loadUtilities() {
+             });
+         })
+         .catch(err => {
+-            container.innerHTML = `<div class="col w-100 text-center text-danger">Ошибка получения данных от сервера: ${err}</div>`;
++            container.innerHTML = `
++                <div class="col-12 text-center py-4 glass-card text-danger">
++                    Ошибка связи с сервером GoOverseer: ${err}
++                </div>`;
+         });
+ }
+ 
+-
+-// Функция активации модуля
+ function activateUtil(id) {
+     fetch(`/api/utils/activate?id=${id}`, { method: 'POST' })
+         .then(res => {
+             if (res.ok) {
+-                loadUtilities(); // Перезагружаем карточки, чтобы раскрыть форму настроек
++                showToast(`Модуль ${id} успешно активирован и добавлен в автозагрузку!`, 'success');
++                loadUtilities();
+             } else {
+-                alert("Ошибка при активации модуля");
++                showToast(`Ошибка активации модуля ${id}`, 'danger');
+             }
+-        });
++        })
++        .catch(err => showToast(`Ошибка: ${err}`, 'danger'));
+ }
+-// Функция деактивации модуля
++
+ function deactivateUtil(id) {
+-    if (confirm("Вы уверены, что хотите полностью выключить модуль и УДАЛИТЬ все его логи с компьютера?")) {
++    if (confirm(`Деактивировать модуль ${id}, выгрузить процесс и очистить его конфигурацию?`)) {
+         fetch(`/api/utils/deactivate?id=${id}`, { method: 'POST' })
+             .then(res => {
+                 if (res.ok) {
+-                    loadUtilities(); // Перезагружаем карточки, пряча форму настроек
++                    showToast(`Модуль ${id} деактивирован.`, 'info');
++                    loadUtilities();
+                 } else {
+-                    alert("Ошибка при деактивации модуля");
++                    showToast(`Ошибка деактивации модуля ${id}`, 'danger');
+                 }
+-            });
++            })
++            .catch(err => showToast(`Ошибка: ${err}`, 'danger'));
+     }
+ }
+-// Заглушка для сохранения настроек
+-// Функция сбора полей формы и отправки настроек на сервер
+-function saveSettings(id) {
+-    // Находим все элементы input на странице, чьи ID начинаются с префикса конфигурации нашей утилиты
+-    const inputs = document.querySelectorAll(`input[id^="cfg_${id}_"]`);
+-    const newSettings = {};
+-
+-    inputs.forEach(input => {
+-        // Отрезаем префикс "cfg_WIFI_", чтобы получить чистый системный ключ параметра (например, "interval_sec")
+-        const key = input.id.replace(`cfg_${id}_`, "");
+-        newSettings[key] = input.value;
+-    });
+-
+-    // Отправляем JSON со всеми полями настроек на бэкенд
+-    fetch(`/api/utils/save?id=${id}`, {
+-        method: 'POST',
+-        headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify(newSettings)
+-    })
+-    .then(res => {
+-        if (res.ok) {
+-            alert("Конфигурация демона успешно сохранена и применена на лету!");
+-            loadUtilities(); // Мягко обновляем данные карточки на экране
+-        } else {
+-            alert("Не удалось сохранить настройки. Проверьте логи сервера.");
+-        }
+-    })
+-    .catch(err => alert("Ошибка отправки данных: " + err));
+-}
+-
+diff --git a/web/templates/index.html b/web/templates/index.html
+index 1941bb3..89724b4 100644
+--- a/web/templates/index.html
++++ b/web/templates/index.html
+@@ -3,45 +3,84 @@
+ <head>
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>GoOverseer Панель</title>
++    <title>GoOverseer — Панель управления</title>
+     <link rel="icon" type="image/png" href="/static/assets/overseer.png">
+     <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+     <link rel="stylesheet" href="/static/css/app.css">
+ </head>
+ <body>
+     <!-- Верхняя навигационная панель -->
+-    <nav class="navbar navbar-expand-lg navbar-dark bg-body-tertiary border-bottom border-translucent">
++    <nav class="navbar navbar-expand-lg navbar-custom sticky-top">
+         <div class="container">
+-            <a class="navbar-brand d-flex align-items-center" href="#">
+-                <img src="/static/assets/overseer.png" alt="Logo" width="30" height="30" class="d-inline-block align-text-top me-2">
+-                <strong>GoOverseer</strong>
++            <a class="navbar-brand d-flex align-items-center brand-glow" href="/">
++                <img src="/static/assets/overseer.png" alt="Logo" width="32" height="32" class="me-2">
++                <strong class="text-white tracking-wide">GoOverseer</strong>
+             </a>
+-            <button onclick="shutdownServer()" class="btn btn-outline-danger btn-sm">
+-                Выгрузить оркестратор
+-            </button>
++
++            <div class="d-flex align-items-center gap-3">
++                <div class="d-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25);">
++                    <span class="pulse-dot"></span>
++                    <small class="text-success fw-semibold">Ядро активно</small>
++                </div>
++                <button onclick="confirmShutdown()" class="btn btn-outline-danger btn-sm rounded-pill px-3">
++                    Остановить ядро
++                </button>
++            </div>
+         </div>
+     </nav>
+ 
+     <!-- Основной контейнер управления -->
+-    <div class="container my-5">
+-        <div class="row mb-4">
+-            <div class="col">
+-                <h2 class="fw-bold">Управление модулями системы</h2>
+-                <p class="text-muted">Ниже представлены обнаруженные демоны-регистраторы.</p>
++    <main class="container my-4 my-md-5">
++        <div class="row mb-4 align-items-center">
++            <div class="col-md-8">
++                <h2 class="fw-bold mb-1 text-white">Мониторинг и демоны-регистраторы</h2>
++                <p class="text-muted mb-0">Управление модулями системного аудита, автозагрузкой и аналитикой в реальном времени.</p>
++            </div>
++            <div class="col-md-4 text-md-end mt-3 mt-md-0">
++                <button onclick="loadUtilities()" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
++                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
++                        <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
++                        <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
++                    </svg>
++                    Обновить статус
++                </button>
+             </div>
+         </div>
+ 
+-        <!-- Сюда JavaScript будет динамически вставлять карточки утилит -->
++        <!-- Динамический список утилит -->
+         <div id="utils-container" class="row row-cols-1 g-4">
+             <div class="col text-center py-5">
+-                <div class="spinner-border text-primary" role="status">
++                <div class="spinner-border text-info" role="status">
+                     <span class="visually-hidden">Загрузка модулей...</span>
+                 </div>
+             </div>
+         </div>
++    </main>
++
++    <!-- Модальное окно подтверждения остановки -->
++    <div class="modal fade" id="shutdownModal" tabindex="-1" aria-hidden="true">
++        <div class="modal-dialog modal-dialog-centered">
++            <div class="modal-content glass-card">
++                <div class="modal-header border-bottom border-secondary-subtle">
++                    <h5 class="modal-title fw-bold text-danger">Остановка оркестратора</h5>
++                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
++                </div>
++                <div class="modal-body py-4 text-center">
++                    <p class="mb-1 fs-5">Полностью выгрузить оркестратор GoOverseer?</p>
++                    <small class="text-muted">Веб-интерфейс будет закрыт, а фоновые службы остановлены.</small>
++                </div>
++                <div class="modal-footer border-top border-secondary-subtle">
++                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
++                    <button type="button" class="btn btn-danger btn-sm" onclick="executeShutdown()">Остановить</button>
++                </div>
++            </div>
++        </div>
+     </div>
+ 
+-    <script type="module" src="/static/js/bootstrap.min.js"></script>
++    <!-- Контейнер тостов -->
++    <div class="toast-container toast-container-custom" id="toastContainer"></div>
++
++    <script src="/static/js/bootstrap.bundle.min.js"></script>
+     <script src="/static/js/app.js"></script>
+ </body>
+ </html>
+diff --git a/web/templates/utils_view.html b/web/templates/utils_view.html
+index 637dfd8..f200453 100644
+--- a/web/templates/utils_view.html
++++ b/web/templates/utils_view.html
+@@ -3,42 +3,109 @@
+ <head>
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>GoOverseer Панель</title>
++    <title>GoOverseer — {{if .Name}}{{.Name}}{{else}}Мониторинг Wi-Fi{{end}}</title>
+     <link rel="icon" type="image/png" href="/static/assets/overseer.png">
+     <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+     <link rel="stylesheet" href="/static/css/app.css">
+ </head>
+ <body>
+     <!-- Верхняя навигационная панель -->
+-    <nav class="navbar navbar-expand-lg navbar-dark bg-body-tertiary border-bottom border-translucent">
++    <nav class="navbar navbar-expand-lg navbar-custom sticky-top">
+         <div class="container">
+-            <a class="navbar-brand d-flex align-items-center" href="/">
+-                <img src="/static/assets/overseer.png" alt="Logo" width="30" height="30" class="d-inline-block align-text-top me-2">
+-                <strong>GoOverseer</strong>
+-            </a>
+-            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+-                <span class="navbar-text text-light fs-5 fw-bold p-0">
+-                    {{if .Utility}}{{.Utility.Name}}{{else if .Title}}{{.Title}}{{else}}Мониторинг Wi-Fi{{end}}
++            <div class="d-flex align-items-center">
++                <a class="navbar-brand d-flex align-items-center me-3 brand-glow" href="/">
++                    <img src="/static/assets/overseer.png" alt="Logo" width="32" height="32" class="me-2">
++                    <strong class="text-white tracking-wide">GoOverseer</strong>
++                </a>
++                <span class="text-secondary me-2">/</span>
++                <span class="text-light fw-semibold fs-6">
++                    {{if .Name}}{{.Name}}{{else}}Мониторинг Wi-Fi{{end}}
+                 </span>
+-             </ul>
+-            <button onclick="shutdownServer()" class="btn btn-outline-danger btn-sm">
+-                Выгрузить оркестратор
+-            </button>
++            </div>
++
++            <div class="d-flex align-items-center gap-3">
++                <div class="d-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25);">
++                    <span class="pulse-dot"></span>
++                    <small class="text-success fw-semibold">Онлайн-телеметрия</small>
++                </div>
++                <a href="/" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
++                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1" style="vertical-align: -2px;">
++                        <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
++                    </svg>
++                    Модули
++                </a>
++                <button onclick="confirmShutdown()" class="btn btn-outline-danger btn-sm rounded-pill px-3">
++                    Остановить ядро
++                </button>
++            </div>
+         </div>
+     </nav>
+ 
+-    <div class="container my-5">
++    <!-- Основной контейнер аналитики -->
++    <main class="container my-4 my-md-5">
+         <div class="row">
+             <div class="col-12">
+-                {{.CustomHTML}} <!-- Сюда Go вклеит табы со склада -->
++                {{.CustomHTML}} <!-- Сюда вставляется динамический шаблон модуля -->
++            </div>
++        </div>
++    </main>
++
++    <!-- Модальное окно подтверждения остановки -->
++    <div class="modal fade" id="shutdownModal" tabindex="-1" aria-hidden="true">
++        <div class="modal-dialog modal-dialog-centered">
++            <div class="modal-content glass-card">
++                <div class="modal-header border-bottom border-secondary-subtle">
++                    <h5 class="modal-title fw-bold text-danger">Остановка оркестратора</h5>
++                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
++                </div>
++                <div class="modal-body py-4 text-center">
++                    <p class="mb-1 fs-5">Полностью выгрузить оркестратор GoOverseer?</p>
++                    <small class="text-muted">Веб-интерфейс будет закрыт, а фоновые службы остановлены.</small>
++                </div>
++                <div class="modal-footer border-top border-secondary-subtle">
++                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
++                    <button type="button" class="btn btn-danger btn-sm" onclick="executeShutdown()">Остановить</button>
++                </div>
+             </div>
+-		</div>
++        </div>
+     </div>
+ 
+-    <!-- Локальный Bootstrap, ожививший табы -->
++    <!-- Контейнер для всплывающих уведомлений (Toasts) -->
++    <div class="toast-container toast-container-custom" id="toastContainer"></div>
++
++    <!-- Локальный Bootstrap Bundle -->
+     <script src="/static/js/bootstrap.bundle.min.js"></script>
+-    
++
++    <!-- КРИТИЧЕСКИЙ ФИКС: Подгружаем Chart.js ДО скрипта модуля аналитики -->
++    <script src="/static/js/chart.min.js"></script>
++
+     <!-- Подгружаем скрипт логики со склада -->
+     <script src="/static/js/utils/{{.CustomJS}}"></script>
++
++    <script>
++        function confirmShutdown() {
++            const modalEl = document.getElementById('shutdownModal');
++            if (modalEl && window.bootstrap) {
++                const modal = new bootstrap.Modal(modalEl);
++                modal.show();
++            } else if (confirm("Остановить оркестратор GoOverseer?")) {
++                executeShutdown();
++            }
++        }
++
++        function executeShutdown() {
++            fetch('/api/shutdown', { method: 'POST' })
++                .then(() => {
++                    document.body.innerHTML = `
++                        <div class="d-flex align-items-center justify-content-center vh-100 bg-dark text-white text-center p-4">
++                            <div>
++                                <h2 class="mb-3 text-danger">Оркестратор GoOverseer остановлен</h2>
++                                <p class="text-muted">Сервер успешно завершил работу. Вкладку браузера можно закрыть.</p>
++                            </div>
++                        </div>
++                    `;
++                });
++        }
++    </script>
+ </body>
+ </html>
