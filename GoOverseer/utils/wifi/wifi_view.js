@@ -977,3 +977,282 @@ function saveWifiSettings() {
         }
     });
 }
+
+// ==========================================================================
+// Сводный диагностический отчёт для руководства (One-Click Executive PDF)
+// ==========================================================================
+
+function openExecutiveReportModal() {
+    const modalEl = document.getElementById('executiveReportModal');
+    if (!modalEl) return;
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+    generateExecutiveReport();
+}
+
+function printExecutiveReport() {
+    window.print();
+}
+
+function generateExecutiveReport() {
+    const container = document.getElementById('executive-report-body');
+    if (!container) return;
+
+    if (!cachedLogData || cachedLogData.length === 0) {
+        container.innerHTML = `
+            <div class="alert alert-warning text-center p-4">
+                <i class="bi bi-exclamation-triangle fs-4 d-block mb-2"></i>
+                <strong>Недостаточно данных для формирования отчёта:</strong><br>
+                Журнал телеметрии пуст. Подождите несколько секунд, пока демон соберёт статистику сети.
+            </div>
+        `;
+        return;
+    }
+
+    const totalRecords = cachedLogData.length;
+    const firstRecord = cachedLogData[0];
+    const lastRecord = cachedLogData[cachedLogData.length - 1];
+
+    let disconnectedCount = 0;
+    let signalSum = 0;
+    let validSignalCount = 0;
+    let minSignal = 0;
+    let maxSignal = -999;
+    let rxRateSum = 0;
+    let txRateSum = 0;
+    let rateCount = 0;
+
+    let bssidSwitches = 0;
+    let flappingOscillations = 0;
+    let lastBssid = null;
+    let bssidHistory = [];
+
+    const outages = [];
+    let currentOutageStart = null;
+
+    cachedLogData.forEach((entry) => {
+        const isDown = entry.state === "отключено" || entry.ssid === "Disconnected" || entry.signal <= -100;
+        if (isDown) {
+            disconnectedCount++;
+            if (!currentOutageStart) {
+                currentOutageStart = entry.time;
+            }
+        } else {
+            if (currentOutageStart) {
+                outages.push({
+                    start: currentOutageStart,
+                    end: entry.time,
+                    prevSsid: entry.ssid
+                });
+                currentOutageStart = null;
+            }
+
+            if (entry.signal > -100 && entry.signal < 0) {
+                signalSum += entry.signal;
+                validSignalCount++;
+                if (entry.signal < minSignal || minSignal === 0) minSignal = entry.signal;
+                if (entry.signal > maxSignal) maxSignal = entry.signal;
+            }
+
+            if (entry.rx_rate > 0 || entry.tx_rate > 0) {
+                rxRateSum += entry.rx_rate;
+                txRateSum += entry.tx_rate;
+                rateCount++;
+            }
+
+            // Анализ смены точек и флаппинга
+            if (entry.bssid && entry.bssid !== "--:--:--:--:--:--") {
+                if (lastBssid && lastBssid !== entry.bssid) {
+                    bssidSwitches++;
+                    if (bssidHistory.length >= 2 && bssidHistory[bssidHistory.length - 2] === entry.bssid) {
+                        flappingOscillations++;
+                    }
+                }
+                bssidHistory.push(entry.bssid);
+                lastBssid = entry.bssid;
+            }
+        }
+    });
+
+    if (currentOutageStart) {
+        outages.push({
+            start: currentOutageStart,
+            end: "по настоящее время",
+            prevSsid: "—"
+        });
+    }
+
+    const uptimePct = totalRecords > 0 ? (((totalRecords - disconnectedCount) / totalRecords) * 100).toFixed(1) : "100.0";
+    const avgSignal = validSignalCount > 0 ? Math.round(signalSum / validSignalCount) : -100;
+    const avgRx = rateCount > 0 ? Math.round(rxRateSum / rateCount) : 0;
+    const avgTx = rateCount > 0 ? Math.round(txRateSum / rateCount) : 0;
+
+    let qualityClass = "text-success";
+    let qualityText = "Отличное";
+    if (avgSignal < -80) { qualityClass = "text-danger"; qualityText = "Критически слабое"; }
+    else if (avgSignal < -70) { qualityClass = "text-warning"; qualityText = "Удовлетворительное"; }
+    else if (avgSignal < -60) { qualityClass = "text-info"; qualityText = "Хорошее"; }
+
+    let flappingBadge = `<span class="badge bg-success-subtle text-success border border-success">Стабильно (0 смен)</span>`;
+    let flappingSummary = "Паразитный роуминг и метания между точками отсутствуют.";
+    if (flappingOscillations >= 2 || bssidSwitches >= 4) {
+        flappingBadge = `<span class="badge bg-danger-subtle text-danger border border-danger">⚠️ Обнаружен сетевой флаппинг!</span>`;
+        flappingSummary = `Зафиксировано ${bssidSwitches} смен точек доступа с признаками осцилляции (метания) между роутерами. Вызывает микроразрывы в приложениях и видеозвонках.`;
+    } else if (bssidSwitches > 0) {
+        flappingBadge = `<span class="badge bg-info-subtle text-info border border-info">Умеренный роуминг (${bssidSwitches} смен)</span>`;
+        flappingSummary = `Зафиксировано штатное переключение между точками доступа (${bssidSwitches} раз).`;
+    }
+
+    // Автоматическое экспертное резюме
+    let executiveConclusion = "";
+    if (parseFloat(uptimePct) >= 99.0 && bssidSwitches <= 1) {
+        executiveConclusion = `
+            <strong>ЗАКЛЮЧЕНИЕ:</strong> За период непрерывного аппаратного мониторинга сетевая инфраструктура Wi-Fi функционировала в штатном режиме без критических сбоев. Коэффициент доступности сети составил <strong>${uptimePct}%</strong> при среднем уровне сигнала <strong>${avgSignal} dBm (${qualityText})</strong>.
+            Претензии пользователя к качеству беспроводной связи объективными инструментальными замерами <u>не подтверждаются</u>.
+        `;
+    } else if (flappingOscillations >= 2 || bssidSwitches >= 4) {
+        executiveConclusion = `
+            <strong>ЗАКЛЮЧЕНИЕ:</strong> Зафиксирован <u>сетевой флаппинг (BSSID Flapping)</u>: сетевой адаптер циклически переключается между конкурирующими точками доступа в рамках одной сети. Рекомендуется зафиксировать устройство за частотой 5 ГГц или снизить порог роуминга в свойствах сетевой карты Windows.
+        `;
+    } else if (outages.length > 0) {
+        executiveConclusion = `
+            <strong>ЗАКЛЮЧЕНИЕ:</strong> Зафиксировано <strong>${outages.length} инцидентов</strong> потери связи. Средний сигнал составлял ${avgSignal} dBm. Обрывы коррелируют с ${avgSignal < -75 ? 'физическим удалением пользователя в зону неуверенного приёма (слабый сигнал)' : 'нестабильностью точки доступа или сетевого адаптера'}.
+        `;
+    } else {
+        executiveConclusion = `
+            <strong>ЗАКЛЮЧЕНИЕ:</strong> Сеть функционирует с доступностью <strong>${uptimePct}%</strong>. Средняя пропускная способность линка: Rx ${avgRx} Мбит/с / Tx ${avgTx} Мбит/с.
+        `;
+    }
+
+    let outageRowsHtml = "";
+    if (outages.length === 0) {
+        outageRowsHtml = `<tr><td colspan="4" class="text-center text-success py-3">Инцидентов прерывания связи (Disconnections) за отчётный период не зафиксировано. Сеть полностью стабильна.</td></tr>`;
+    } else {
+        outages.slice(-10).forEach((out, i) => {
+            outageRowsHtml += `
+                <tr>
+                    <td><strong>#${i + 1}</strong></td>
+                    <td><code>${out.start}</code></td>
+                    <td><code>${out.end}</code></td>
+                    <td><span class="badge bg-danger-subtle text-danger border border-danger">Обрыв соединения</span></td>
+                </tr>
+            `;
+        });
+    }
+
+    container.innerHTML = `
+        <div class="report-print-container p-2">
+            <!-- Официальная шапка отчёта -->
+            <div class="d-flex justify-content-between align-items-start border-bottom pb-3 mb-4">
+                <div>
+                    <h4 class="fw-bold mb-1" style="color: #06b6d4;">ДИАГНОСТИЧЕСКИЙ ОТЧЁТ О КАЧЕСТВЕ БЕСПРОВОДНОЙ СВЯЗИ</h4>
+                    <div class="small text-muted">Сформировано системой телеметрии <strong>GoOverseer 2©26</strong></div>
+                </div>
+                <div class="text-end small text-muted">
+                    <div>Дата отчёта: <strong>${new Date().toLocaleString('ru-RU')}</strong></div>
+                    <div>Интервал анализа: <strong>${firstRecord.time} — ${lastRecord.time}</strong></div>
+                    <div>Всего замеров: <strong>${totalRecords}</strong></div>
+                </div>
+            </div>
+
+            <!-- Блок ключевых показателей (KPI) -->
+            <div class="row g-3 mb-4">
+                <div class="col-sm-6 col-md-3">
+                    <div class="report-kpi-card text-center p-3 rounded-3">
+                        <div class="small text-muted mb-1">Доступность сети (Uptime)</div>
+                        <h3 class="fw-bold text-success mb-0">${uptimePct}%</h3>
+                        <small class="text-muted">${totalRecords - disconnectedCount} из ${totalRecords} замеров</small>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-md-3">
+                    <div class="report-kpi-card text-center p-3 rounded-3">
+                        <div class="small text-muted mb-1">Инцидентов обрыва связи</div>
+                        <h3 class="fw-bold ${outages.length > 0 ? 'text-danger' : 'text-success'} mb-0">${outages.length}</h3>
+                        <small class="text-muted">${outages.length === 0 ? 'Сбоев нет' : 'Зафиксированы разрывы'}</small>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-md-3">
+                    <div class="report-kpi-card text-center p-3 rounded-3">
+                        <div class="small text-muted mb-1">Средний уровень сигнала</div>
+                        <h3 class="fw-bold ${qualityClass} mb-0">${avgSignal} dBm</h3>
+                        <small class="text-muted">${qualityText} (разброс: ${minSignal}..${maxSignal})</small>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-md-3">
+                    <div class="report-kpi-card text-center p-3 rounded-3">
+                        <div class="small text-muted mb-1">Сетевой флаппинг (Роуминг)</div>
+                        <div class="mt-2 mb-1">${flappingBadge}</div>
+                        <small class="text-muted">${bssidSwitches} смен BSSID</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Текущие параметры подключения -->
+            <div class="mb-4">
+                <h6 class="fw-bold mb-2">1. Параметры беспроводного подключения</h6>
+                <table class="table table-sm">
+                    <tbody>
+                        <tr>
+                            <td class="text-muted" style="width: 25%;">Текущая сеть (SSID):</td>
+                            <td><strong>${lastRecord.ssid || '—'}</strong></td>
+                            <td class="text-muted" style="width: 25%;">Точка доступа (BSSID):</td>
+                            <td><code>${lastRecord.bssid || '—'}</code></td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Радиоканал / Стандарт:</td>
+                            <td>Канал ${lastRecord.channel || '—'} (${lastRecord.standard || '802.11'})</td>
+                            <td class="text-muted">Средняя скорость линка:</td>
+                            <td>Приём: <strong>${avgRx} Мбит/с</strong> / Передача: <strong>${avgTx} Мбит/с</strong></td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Сетевой интерфейс:</td>
+                            <td>${lastRecord.interface || 'Беспроводная сеть'}</td>
+                            <td class="text-muted">Статус роуминга:</td>
+                            <td>${flappingSummary}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Таблица зафиксированных инцидентов -->
+            <div class="mb-4">
+                <h6 class="fw-bold mb-2">2. Журнал прерываний связи и сбоев</h6>
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th style="width: 10%;">#</th>
+                            <th style="width: 30%;">Время начала сбоя</th>
+                            <th style="width: 30%;">Время восстановления</th>
+                            <th style="width: 30%;">Статус</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${outageRowsHtml}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Итоговое экспертное заключение -->
+            <div class="p-3 rounded-3 mb-4" style="background: rgba(6, 182, 212, 0.08); border-left: 4px solid #06b6d4;">
+                <h6 class="fw-bold text-info mb-2">3. Экспертное резюме для руководства</h6>
+                <div class="small" style="line-height: 1.6;">
+                    ${executiveConclusion}
+                </div>
+            </div>
+
+            <!-- Подпись инженера / сисадмина -->
+            <div class="d-flex justify-content-between align-items-end pt-4 mt-4 border-top">
+                <div class="small text-muted">
+                    Анализ проведён автоматически модулем <strong>GoOverseer/WIFI</strong>.<br>
+                    Автор архитектуры: <em>StrangeFragment 2©26</em>
+                </div>
+                <div class="text-end" style="min-width: 260px;">
+                    <div class="small text-muted mb-3">Подпись технического специалиста:</div>
+                    <div class="border-bottom border-dark pb-1 text-center" style="font-family: monospace;">
+                        _______________________ / _________________
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}

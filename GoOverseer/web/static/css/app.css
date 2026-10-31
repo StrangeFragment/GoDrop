@@ -373,3 +373,71 @@ body {
   border: 1px solid rgba(59, 130, 246, 0.4);
   font-weight: 600;
 }
+
+/* Стили для чистой печати и экспорта отчёта руководству в PDF */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    padding: 0 !important;
+    font-size: 10pt !important;
+  }
+  .navbar-custom, .footer-fixed, .nav-tabs, .btn, .toast-container-custom, .modal-backdrop, .modal-header .btn-close, #wifiTab {
+    display: none !important;
+  }
+  .modal {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  .modal-dialog {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+  }
+  .modal-content {
+    background: #ffffff !important;
+    color: #111827 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+  .modal-footer {
+    display: none !important;
+  }
+  .report-print-container {
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+  }
+  .report-print-container table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-top: 10px !important;
+    margin-bottom: 15px !important;
+  }
+  .report-print-container th,
+  .report-print-container td {
+    border: 1px solid #d1d5db !important;
+    padding: 6px 10px !important;
+    color: #111827 !important;
+    font-size: 9.5pt !important;
+  }
+  .report-print-container th {
+    background: #f3f4f6 !important;
+    font-weight: bold !important;
+  }
+  .report-kpi-card {
+    border: 1px solid #e5e7eb !important;
+    background: #f9fafb !important;
+    color: #111827 !important;
+    padding: 12px !important;
+    border-radius: 6px !important;
+  }
+  .badge {
+    border: 1px solid #9ca3af !important;
+    color: #111827 !important;
+    background: transparent !important;
+  }
+}

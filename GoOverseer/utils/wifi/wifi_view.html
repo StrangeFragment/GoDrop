@@ -165,6 +165,14 @@
       Конфигурация
     </button>
   </li>
+  <li class="nav-item ms-auto d-flex align-items-center" role="presentation">
+    <button class="btn btn-sm btn-outline-info rounded-pill px-3 d-flex align-items-center gap-2 shadow-sm" onclick="openExecutiveReportModal()">
+      <svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
+      </svg>
+      Отчёт руководству (PDF)
+    </button>
+  </li>
 </ul>
 
 <!-- Содержимое вкладок -->
@@ -232,6 +240,9 @@
         <!-- Кнопки управления журналом -->
         <div class="d-flex align-items-center flex-wrap gap-2">
             <span class="small text-muted me-2">Размер файла: <strong id="log-size-badge" class="text-info">0 КБ</strong></span>
+            <button class="btn btn-sm btn-outline-info rounded-pill px-3" onclick="openExecutiveReportModal()">
+                <i class="bi bi-file-earmark-pdf me-1"></i>Отчёт для руководства (PDF)
+            </button>
             <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToCSV()">
                 Экспорт CSV
             </button>
@@ -450,6 +461,47 @@
         <button class="btn btn-cyan rounded-pill px-4" onclick="saveWifiSettings()">
             Сохранить и применить на лету
         </button>
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно: Сводный диагностический отчёт для руководства -->
+<div class="modal fade" id="executiveReportModal" tabindex="-1" aria-labelledby="executiveReportModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content glass-card border-secondary">
+      <div class="modal-header border-secondary-subtle">
+        <h5 class="modal-title text-white fw-bold d-flex align-items-center gap-2" id="executiveReportModalLabel">
+          <svg width="20" height="20" fill="currentColor" class="text-info" viewBox="0 0 16 16">
+            <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
+          </svg>
+          Сводный диагностический отчёт для руководства
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+      </div>
+
+      <div class="modal-body p-4" id="report-printable-area">
+        <div id="executive-report-body">
+            <div class="text-center py-5 text-muted">
+                <span class="spinner-border spinner-border-sm me-2"></span>Формирование отчёта...
+            </div>
+        </div>
+      </div>
+
+      <div class="modal-footer border-secondary-subtle d-flex justify-content-between">
+        <div class="small text-muted">
+          <i class="bi bi-info-circle me-1"></i>В диалоге печати выберите «Сохранить как PDF» для сохранения официального документа.
+        </div>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">Закрыть</button>
+          <button type="button" class="btn btn-cyan rounded-pill px-4 d-flex align-items-center gap-2" onclick="printExecutiveReport()">
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/>
+              <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/>
+            </svg>
+            Распечатать / Экспорт в PDF
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </div>

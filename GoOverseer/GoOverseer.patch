@@ -162,10 +162,10 @@ index 6173190..a6f091b 100644
      }
    ]
 diff --git a/utils/wifi/wifi_view.html b/utils/wifi/wifi_view.html
-index 9df0b18..247a6b6 100644
+index 9df0b18..151898e 100644
 --- a/utils/wifi/wifi_view.html
 +++ b/utils/wifi/wifi_view.html
-@@ -1,71 +1,275 @@
+@@ -1,71 +1,286 @@
 -<!-- Блок живых карточек экспресс-аналитики вместо старого текста описания -->
 -<div class="row row-cols-1 row-cols-md-4 g-3 mb-4">
 +<!-- Живые карточки экспресс-аналитики Wi-Fi радиоэфира -->
@@ -319,7 +319,8 @@ index 9df0b18..247a6b6 100644
 +      График радиоэфира
 +    </button>
 +  </li>
-+  <li class="nav-item" role="presentation">
+   <li class="nav-item" role="presentation">
+-    <button class="nav-link active" id="chart-tab" data-bs-toggle="tab" data-bs-target="#chart-tab-pane" type="button" role="tab" aria-controls="chart-tab-pane" aria-selected="true">График радиоэфира</button>
 +    <button class="nav-link d-flex align-items-center gap-2" id="log-tab" data-bs-toggle="tab" data-bs-target="#log-tab-pane" type="button" role="tab" aria-controls="log-tab-pane" aria-selected="false">
 +      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
 +        <path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM1 3.857C1 3.384 1.448 3 2 3h12c.552 0 1 .384 1 .857v10.286c0 .473-.448.857-1 .857H2c-.552 0-1-.384-1-.857V3.857z"/>
@@ -327,9 +328,9 @@ index 9df0b18..247a6b6 100644
 +      </svg>
 +      История подключений
 +    </button>
-+  </li>
+   </li>
    <li class="nav-item" role="presentation">
--    <button class="nav-link active" id="chart-tab" data-bs-toggle="tab" data-bs-target="#chart-tab-pane" type="button" role="tab" aria-controls="chart-tab-pane" aria-selected="true">График радиоэфира</button>
+-    <button class="nav-link" id="log-tab" data-bs-toggle="tab" data-bs-target="#log-tab-pane" type="button" role="tab" aria-controls="log-tab-pane" aria-selected="false">История подключений</button>
 +    <button class="nav-link d-flex align-items-center gap-2" id="scanner-tab" data-bs-toggle="tab" data-bs-target="#scanner-tab-pane" type="button" role="tab" aria-controls="scanner-tab-pane" aria-selected="false">
 +      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
 +        <path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/>
@@ -338,22 +339,29 @@ index 9df0b18..247a6b6 100644
 +    </button>
    </li>
    <li class="nav-item" role="presentation">
--    <button class="nav-link" id="log-tab" data-bs-toggle="tab" data-bs-target="#log-tab-pane" type="button" role="tab" aria-controls="log-tab-pane" aria-selected="false">История подключений</button>
+-    <button class="nav-link" id="config-tab" data-bs-toggle="tab" data-bs-target="#config-tab-pane" type="button" role="tab" aria-controls="config-tab-pane" aria-selected="false">Конфигурация</button>
 +    <button class="nav-link d-flex align-items-center gap-2" id="security-tab" data-bs-toggle="tab" data-bs-target="#security-tab-pane" type="button" role="tab" aria-controls="security-tab-pane" aria-selected="false">
 +      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
 +        <path d="M8 0c-.69 0-1.843.265-2.928.56-1.11.3-2.229.655-2.887.87a1.54 1.54 0 0 0-1.044 1.262c-.596 4.477.787 7.795 2.464 9.99 1.572 2.053 3.483 3.09 4.316 3.313.064.017.13.025.195.025s.131-.008.195-.025c.833-.223 2.744-1.26 4.316-3.313 1.677-2.195 3.06-5.513 2.464-9.99a1.54 1.54 0 0 0-1.044-1.263 62.467 62.467 0 0 0-2.887-.87C9.843.266 8.69 0 8 0zm0 1.072c.628 0 1.67.24 2.72.528.847.23 1.71.49 2.31.678.435 3.86-.677 6.78-2.18 8.74C9.53 12.72 8.434 13.568 8 13.82c-.434-.252-1.53-.1-2.85-2.802-1.503-1.96-2.615-4.88-2.18-8.74.6-.188 1.463-.448 2.31-.678 1.05-.288 2.092-.528 2.72-.528z"/>
 +      </svg>
 +      Реестр точек и безопасность
 +    </button>
-   </li>
-   <li class="nav-item" role="presentation">
--    <button class="nav-link" id="config-tab" data-bs-toggle="tab" data-bs-target="#config-tab-pane" type="button" role="tab" aria-controls="config-tab-pane" aria-selected="false">Конфигурация</button>
++  </li>
++  <li class="nav-item" role="presentation">
 +    <button class="nav-link d-flex align-items-center gap-2" id="config-tab" data-bs-toggle="tab" data-bs-target="#config-tab-pane" type="button" role="tab" aria-controls="config-tab-pane" aria-selected="false">
 +      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
 +        <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
 +        <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/>
 +      </svg>
 +      Конфигурация
++    </button>
++  </li>
++  <li class="nav-item ms-auto d-flex align-items-center" role="presentation">
++    <button class="btn btn-sm btn-outline-info rounded-pill px-3 d-flex align-items-center gap-2 shadow-sm" onclick="openExecutiveReportModal()">
++      <svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
++        <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
++      </svg>
++      Отчёт руководству (PDF)
 +    </button>
    </li>
  </ul>
@@ -433,6 +441,9 @@ index 9df0b18..247a6b6 100644
 +        <!-- Кнопки управления журналом -->
 +        <div class="d-flex align-items-center flex-wrap gap-2">
 +            <span class="small text-muted me-2">Размер файла: <strong id="log-size-badge" class="text-info">0 КБ</strong></span>
++            <button class="btn btn-sm btn-outline-info rounded-pill px-3" onclick="openExecutiveReportModal()">
++                <i class="bi bi-file-earmark-pdf me-1"></i>Отчёт для руководства (PDF)
++            </button>
 +            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="exportLogsToCSV()">
 +                Экспорт CSV
 +            </button>
@@ -474,13 +485,20 @@ index 9df0b18..247a6b6 100644
                  <tr>
                      <th>Время события</th>
                      <th>Сеть (SSID)</th>
-@@ -74,24 +278,178 @@
+@@ -74,24 +289,219 @@
                      <th>Стандарт</th>
                      <th>Скорость (Rx/Tx)</th>
                      <th>Сигнал</th>
 +                    <th>Статус</th>
-+                </tr>
-+            </thead>
+                 </tr>
+             </thead>
+-            
+-        <tbody id="wifi-log-table-body">
+-            <!-- НАША ИСПРАВЛЕННАЯ СТРОКА: оригинальный JS ищет именно этот id -->
+-            <tr id="wifi-log-table-loading">
+-                <td colspan="7" class="text-center text-muted py-4">Считывание файла wifi_records.jsonl...</td>
+-            </tr>
+-        </tbody>
 +            <tbody id="wifi-log-table-body">
 +                <tr id="wifi-log-table-loading">
 +                    <td colspan="8" class="text-center text-muted py-5">
@@ -492,7 +510,7 @@ index 9df0b18..247a6b6 100644
 +        </table>
 +    </div>
 +  </div>
-+
+ 
 +  <!-- 3. Вкладка сканера зашумленности радиоэфира -->
 +  <div class="tab-pane fade glass-card p-4" id="scanner-tab-pane" role="tabpanel" aria-labelledby="scanner-tab" tabindex="0">
 +    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
@@ -551,15 +569,8 @@ index 9df0b18..247a6b6 100644
 +                    <th>Сигнал</th>
 +                    <th>Тип сети</th>
 +                    <th>Шифрование</th>
-                 </tr>
-             </thead>
--            
--        <tbody id="wifi-log-table-body">
--            <!-- НАША ИСПРАВЛЕННАЯ СТРОКА: оригинальный JS ищет именно этот id -->
--            <tr id="wifi-log-table-loading">
--                <td colspan="7" class="text-center text-muted py-4">Считывание файла wifi_records.jsonl...</td>
--            </tr>
--        </tbody>
++                </tr>
++            </thead>
 +            <tbody id="scan-table-body">
 +                <tr><td colspan="7" class="text-center text-muted py-4">Нажмите «Сканировать эфир» для сбора данных</td></tr>
 +            </tbody>
@@ -578,7 +589,7 @@ index 9df0b18..247a6b6 100644
 +            ↻ Пересчитать историю
 +        </button>
 +    </div>
- 
++
 +    <!-- Сводка безопасности -->
 +    <div class="row row-cols-1 row-cols-md-3 g-3 mb-4">
 +        <div class="col">
@@ -664,13 +675,54 @@ index 9df0b18..247a6b6 100644
 +            Сохранить и применить на лету
 +        </button>
 +    </div>
++  </div>
++</div>
++
++<!-- Модальное окно: Сводный диагностический отчёт для руководства -->
++<div class="modal fade" id="executiveReportModal" tabindex="-1" aria-labelledby="executiveReportModalLabel" aria-hidden="true">
++  <div class="modal-dialog modal-xl modal-dialog-scrollable">
++    <div class="modal-content glass-card border-secondary">
++      <div class="modal-header border-secondary-subtle">
++        <h5 class="modal-title text-white fw-bold d-flex align-items-center gap-2" id="executiveReportModalLabel">
++          <svg width="20" height="20" fill="currentColor" class="text-info" viewBox="0 0 16 16">
++            <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
++          </svg>
++          Сводный диагностический отчёт для руководства
++        </h5>
++        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
++      </div>
++
++      <div class="modal-body p-4" id="report-printable-area">
++        <div id="executive-report-body">
++            <div class="text-center py-5 text-muted">
++                <span class="spinner-border spinner-border-sm me-2"></span>Формирование отчёта...
++            </div>
++        </div>
++      </div>
++
++      <div class="modal-footer border-secondary-subtle d-flex justify-content-between">
++        <div class="small text-muted">
++          <i class="bi bi-info-circle me-1"></i>В диалоге печати выберите «Сохранить как PDF» для сохранения официального документа.
++        </div>
++        <div class="d-flex gap-2">
++          <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">Закрыть</button>
++          <button type="button" class="btn btn-cyan rounded-pill px-4 d-flex align-items-center gap-2" onclick="printExecutiveReport()">
++            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
++              <path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/>
++              <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/>
++            </svg>
++            Распечатать / Экспорт в PDF
++          </button>
++        </div>
++      </div>
++    </div>
    </div>
  </div>
 diff --git a/utils/wifi/wifi_view.js b/utils/wifi/wifi_view.js
-index 9094a27..d98f55e 100644
+index 9094a27..7f0c9d1 100644
 --- a/utils/wifi/wifi_view.js
 +++ b/utils/wifi/wifi_view.js
-@@ -1,194 +1,979 @@
+@@ -1,194 +1,1258 @@
 +// ==========================================================================
 +// GoOverseer Wi-Fi Telemetry, Analytics, Scanner & AP Security Logic
 +// ==========================================================================
@@ -1147,21 +1199,24 @@ index 9094a27..d98f55e 100644
 +        if (elStatMax) elStatMax.innerText = `${maxSig} dBm`;
 +        if (elStatMin) elStatMin.innerText = `${minSig} dBm`;
 +        if (elStatAvg) elStatAvg.innerText = `${avgSig} dBm`;
-+    }
-+
-+    // 3. ОБНОВЛЕНИЕ ТАБЛИЦЫ ИСТОРИИ
-+    if (!tableBody) return;
-+
-+    if (!data || data.length === 0) {
-+        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">История подключений пока пуста...</td></tr>`;
-+        return;
      }
  
 -    tableBody.innerHTML = "";
-+    let filteredData = data;
++    // 3. ОБНОВЛЕНИЕ ТАБЛИЦЫ ИСТОРИИ
++    if (!tableBody) return;
  
 -    if (data.length === 0) {
 -        tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">Логи пока пусты...</td></tr>`;
++    if (!data || data.length === 0) {
++        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">История подключений пока пуста...</td></tr>`;
+         return;
+     }
+ 
+-    // А. ОБНОВЛЯЕМ ГРАФИК CHART.JS
+-    wifiChartInstance.data.labels = [];
+-    wifiChartInstance.data.datasets[0].data = [];
++    let filteredData = data;
++
 +    if (currentLogFilter === 'connected') {
 +        filteredData = filteredData.filter(d => d.ssid && d.ssid !== "Disconnected" && d.state !== "отключено");
 +    } else if (currentLogFilter === 'disconnected') {
@@ -1177,18 +1232,20 @@ index 9094a27..d98f55e 100644
 +            (d.time && d.time.toLowerCase().includes(q))
 +        );
 +    }
-+
+ 
+-    const chartPoints = data.slice(-40);
+-    chartPoints.forEach(entry => {
+-        let labelTime = "—";
+-        if (entry.time) {
+-            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
 +    const counterEl = document.getElementById("records-counter");
 +    if (counterEl) counterEl.innerText = filteredData.length;
 +
 +    if (filteredData.length === 0) {
 +        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">События по заданному фильтру не найдены.</td></tr>`;
-         return;
-     }
- 
--    // А. ОБНОВЛЯЕМ ГРАФИК CHART.JS
--    wifiChartInstance.data.labels = [];
--    wifiChartInstance.data.datasets[0].data = [];
++        return;
++    }
++
 +    const displayRows = filteredData.slice(-60).reverse();
 +    const htmlChunks = [];
 +
@@ -1198,12 +1255,7 @@ index 9094a27..d98f55e 100644
 +
 +        let statusBadge = `<span class="badge badge-custom badge-connected">Подключено</span>`;
 +        let signalClass = "text-success";
- 
--    const chartPoints = data.slice(-40);
--    chartPoints.forEach(entry => {
--        let labelTime = "—";
--        if (entry.time) {
--            labelTime = entry.time.includes(" ") ? entry.time.split(" ")[1] : entry.time;
++
 +        if (isDisc) {
 +            statusBadge = `<span class="badge badge-custom badge-disconnected">Отключено</span>`;
 +            signalClass = "text-danger";
@@ -1632,9 +1684,8 @@ index 9094a27..d98f55e 100644
 +    if (btnIcon) {
 +        btnIcon.innerText = isPaused ? "▶ Возобновить" : "⏸ Пауза";
 +    }
- }
- 
--// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
++}
++
 +// Фильтры и поиск по истории
 +function setLogFilter(filter) {
 +    currentLogFilter = filter;
@@ -1704,8 +1755,9 @@ index 9094a27..d98f55e 100644
 +    link.click();
 +    document.body.removeChild(link);
 +    setTimeout(() => URL.revokeObjectURL(url), 1000);
-+}
-+
+ }
+ 
+-// ДЛЯ СОХРАНЕНИЯ НАСТРОЕК
 +// Сохранение настроек утилиты
  function saveWifiSettings() {
 -    const id = new URLSearchParams(window.location.search).get('id');
@@ -1741,7 +1793,7 @@ index 9094a27..d98f55e 100644
 +        }
      });
  }
--
+ 
 -// ДЛЯ КНОПКИ ВЫГРУЗКИ из ДЕМОНОВ:
 -function shutdownServer() {
 -        if (confirm("Вы уверены, что хотите полностью остановить оркестратор и закрыть сервер?")) {
@@ -1750,8 +1802,284 @@ index 9094a27..d98f55e 100644
 -                    alert("Оркестратор остановлен. Окно можно закрыть.");
 -                    window.close();
 -            });
--}
--}
++// ==========================================================================
++// Сводный диагностический отчёт для руководства (One-Click Executive PDF)
++// ==========================================================================
++
++function openExecutiveReportModal() {
++    const modalEl = document.getElementById('executiveReportModal');
++    if (!modalEl) return;
++    const modal = new bootstrap.Modal(modalEl);
++    modal.show();
++    generateExecutiveReport();
++}
++
++function printExecutiveReport() {
++    window.print();
+ }
++
++function generateExecutiveReport() {
++    const container = document.getElementById('executive-report-body');
++    if (!container) return;
++
++    if (!cachedLogData || cachedLogData.length === 0) {
++        container.innerHTML = `
++            <div class="alert alert-warning text-center p-4">
++                <i class="bi bi-exclamation-triangle fs-4 d-block mb-2"></i>
++                <strong>Недостаточно данных для формирования отчёта:</strong><br>
++                Журнал телеметрии пуст. Подождите несколько секунд, пока демон соберёт статистику сети.
++            </div>
++        `;
++        return;
++    }
++
++    const totalRecords = cachedLogData.length;
++    const firstRecord = cachedLogData[0];
++    const lastRecord = cachedLogData[cachedLogData.length - 1];
++
++    let disconnectedCount = 0;
++    let signalSum = 0;
++    let validSignalCount = 0;
++    let minSignal = 0;
++    let maxSignal = -999;
++    let rxRateSum = 0;
++    let txRateSum = 0;
++    let rateCount = 0;
++
++    let bssidSwitches = 0;
++    let flappingOscillations = 0;
++    let lastBssid = null;
++    let bssidHistory = [];
++
++    const outages = [];
++    let currentOutageStart = null;
++
++    cachedLogData.forEach((entry) => {
++        const isDown = entry.state === "отключено" || entry.ssid === "Disconnected" || entry.signal <= -100;
++        if (isDown) {
++            disconnectedCount++;
++            if (!currentOutageStart) {
++                currentOutageStart = entry.time;
++            }
++        } else {
++            if (currentOutageStart) {
++                outages.push({
++                    start: currentOutageStart,
++                    end: entry.time,
++                    prevSsid: entry.ssid
++                });
++                currentOutageStart = null;
++            }
++
++            if (entry.signal > -100 && entry.signal < 0) {
++                signalSum += entry.signal;
++                validSignalCount++;
++                if (entry.signal < minSignal || minSignal === 0) minSignal = entry.signal;
++                if (entry.signal > maxSignal) maxSignal = entry.signal;
++            }
++
++            if (entry.rx_rate > 0 || entry.tx_rate > 0) {
++                rxRateSum += entry.rx_rate;
++                txRateSum += entry.tx_rate;
++                rateCount++;
++            }
++
++            // Анализ смены точек и флаппинга
++            if (entry.bssid && entry.bssid !== "--:--:--:--:--:--") {
++                if (lastBssid && lastBssid !== entry.bssid) {
++                    bssidSwitches++;
++                    if (bssidHistory.length >= 2 && bssidHistory[bssidHistory.length - 2] === entry.bssid) {
++                        flappingOscillations++;
++                    }
++                }
++                bssidHistory.push(entry.bssid);
++                lastBssid = entry.bssid;
++            }
++        }
++    });
++
++    if (currentOutageStart) {
++        outages.push({
++            start: currentOutageStart,
++            end: "по настоящее время",
++            prevSsid: "—"
++        });
++    }
++
++    const uptimePct = totalRecords > 0 ? (((totalRecords - disconnectedCount) / totalRecords) * 100).toFixed(1) : "100.0";
++    const avgSignal = validSignalCount > 0 ? Math.round(signalSum / validSignalCount) : -100;
++    const avgRx = rateCount > 0 ? Math.round(rxRateSum / rateCount) : 0;
++    const avgTx = rateCount > 0 ? Math.round(txRateSum / rateCount) : 0;
++
++    let qualityClass = "text-success";
++    let qualityText = "Отличное";
++    if (avgSignal < -80) { qualityClass = "text-danger"; qualityText = "Критически слабое"; }
++    else if (avgSignal < -70) { qualityClass = "text-warning"; qualityText = "Удовлетворительное"; }
++    else if (avgSignal < -60) { qualityClass = "text-info"; qualityText = "Хорошее"; }
++
++    let flappingBadge = `<span class="badge bg-success-subtle text-success border border-success">Стабильно (0 смен)</span>`;
++    let flappingSummary = "Паразитный роуминг и метания между точками отсутствуют.";
++    if (flappingOscillations >= 2 || bssidSwitches >= 4) {
++        flappingBadge = `<span class="badge bg-danger-subtle text-danger border border-danger">⚠️ Обнаружен сетевой флаппинг!</span>`;
++        flappingSummary = `Зафиксировано ${bssidSwitches} смен точек доступа с признаками осцилляции (метания) между роутерами. Вызывает микроразрывы в приложениях и видеозвонках.`;
++    } else if (bssidSwitches > 0) {
++        flappingBadge = `<span class="badge bg-info-subtle text-info border border-info">Умеренный роуминг (${bssidSwitches} смен)</span>`;
++        flappingSummary = `Зафиксировано штатное переключение между точками доступа (${bssidSwitches} раз).`;
++    }
++
++    // Автоматическое экспертное резюме
++    let executiveConclusion = "";
++    if (parseFloat(uptimePct) >= 99.0 && bssidSwitches <= 1) {
++        executiveConclusion = `
++            <strong>ЗАКЛЮЧЕНИЕ:</strong> За период непрерывного аппаратного мониторинга сетевая инфраструктура Wi-Fi функционировала в штатном режиме без критических сбоев. Коэффициент доступности сети составил <strong>${uptimePct}%</strong> при среднем уровне сигнала <strong>${avgSignal} dBm (${qualityText})</strong>.
++            Претензии пользователя к качеству беспроводной связи объективными инструментальными замерами <u>не подтверждаются</u>.
++        `;
++    } else if (flappingOscillations >= 2 || bssidSwitches >= 4) {
++        executiveConclusion = `
++            <strong>ЗАКЛЮЧЕНИЕ:</strong> Зафиксирован <u>сетевой флаппинг (BSSID Flapping)</u>: сетевой адаптер циклически переключается между конкурирующими точками доступа в рамках одной сети. Рекомендуется зафиксировать устройство за частотой 5 ГГц или снизить порог роуминга в свойствах сетевой карты Windows.
++        `;
++    } else if (outages.length > 0) {
++        executiveConclusion = `
++            <strong>ЗАКЛЮЧЕНИЕ:</strong> Зафиксировано <strong>${outages.length} инцидентов</strong> потери связи. Средний сигнал составлял ${avgSignal} dBm. Обрывы коррелируют с ${avgSignal < -75 ? 'физическим удалением пользователя в зону неуверенного приёма (слабый сигнал)' : 'нестабильностью точки доступа или сетевого адаптера'}.
++        `;
++    } else {
++        executiveConclusion = `
++            <strong>ЗАКЛЮЧЕНИЕ:</strong> Сеть функционирует с доступностью <strong>${uptimePct}%</strong>. Средняя пропускная способность линка: Rx ${avgRx} Мбит/с / Tx ${avgTx} Мбит/с.
++        `;
++    }
++
++    let outageRowsHtml = "";
++    if (outages.length === 0) {
++        outageRowsHtml = `<tr><td colspan="4" class="text-center text-success py-3">Инцидентов прерывания связи (Disconnections) за отчётный период не зафиксировано. Сеть полностью стабильна.</td></tr>`;
++    } else {
++        outages.slice(-10).forEach((out, i) => {
++            outageRowsHtml += `
++                <tr>
++                    <td><strong>#${i + 1}</strong></td>
++                    <td><code>${out.start}</code></td>
++                    <td><code>${out.end}</code></td>
++                    <td><span class="badge bg-danger-subtle text-danger border border-danger">Обрыв соединения</span></td>
++                </tr>
++            `;
++        });
++    }
++
++    container.innerHTML = `
++        <div class="report-print-container p-2">
++            <!-- Официальная шапка отчёта -->
++            <div class="d-flex justify-content-between align-items-start border-bottom pb-3 mb-4">
++                <div>
++                    <h4 class="fw-bold mb-1" style="color: #06b6d4;">ДИАГНОСТИЧЕСКИЙ ОТЧЁТ О КАЧЕСТВЕ БЕСПРОВОДНОЙ СВЯЗИ</h4>
++                    <div class="small text-muted">Сформировано системой телеметрии <strong>GoOverseer 2©26</strong></div>
++                </div>
++                <div class="text-end small text-muted">
++                    <div>Дата отчёта: <strong>${new Date().toLocaleString('ru-RU')}</strong></div>
++                    <div>Интервал анализа: <strong>${firstRecord.time} — ${lastRecord.time}</strong></div>
++                    <div>Всего замеров: <strong>${totalRecords}</strong></div>
++                </div>
++            </div>
++
++            <!-- Блок ключевых показателей (KPI) -->
++            <div class="row g-3 mb-4">
++                <div class="col-sm-6 col-md-3">
++                    <div class="report-kpi-card text-center p-3 rounded-3">
++                        <div class="small text-muted mb-1">Доступность сети (Uptime)</div>
++                        <h3 class="fw-bold text-success mb-0">${uptimePct}%</h3>
++                        <small class="text-muted">${totalRecords - disconnectedCount} из ${totalRecords} замеров</small>
++                    </div>
++                </div>
++                <div class="col-sm-6 col-md-3">
++                    <div class="report-kpi-card text-center p-3 rounded-3">
++                        <div class="small text-muted mb-1">Инцидентов обрыва связи</div>
++                        <h3 class="fw-bold ${outages.length > 0 ? 'text-danger' : 'text-success'} mb-0">${outages.length}</h3>
++                        <small class="text-muted">${outages.length === 0 ? 'Сбоев нет' : 'Зафиксированы разрывы'}</small>
++                    </div>
++                </div>
++                <div class="col-sm-6 col-md-3">
++                    <div class="report-kpi-card text-center p-3 rounded-3">
++                        <div class="small text-muted mb-1">Средний уровень сигнала</div>
++                        <h3 class="fw-bold ${qualityClass} mb-0">${avgSignal} dBm</h3>
++                        <small class="text-muted">${qualityText} (разброс: ${minSignal}..${maxSignal})</small>
++                    </div>
++                </div>
++                <div class="col-sm-6 col-md-3">
++                    <div class="report-kpi-card text-center p-3 rounded-3">
++                        <div class="small text-muted mb-1">Сетевой флаппинг (Роуминг)</div>
++                        <div class="mt-2 mb-1">${flappingBadge}</div>
++                        <small class="text-muted">${bssidSwitches} смен BSSID</small>
++                    </div>
++                </div>
++            </div>
++
++            <!-- Текущие параметры подключения -->
++            <div class="mb-4">
++                <h6 class="fw-bold mb-2">1. Параметры беспроводного подключения</h6>
++                <table class="table table-sm">
++                    <tbody>
++                        <tr>
++                            <td class="text-muted" style="width: 25%;">Текущая сеть (SSID):</td>
++                            <td><strong>${lastRecord.ssid || '—'}</strong></td>
++                            <td class="text-muted" style="width: 25%;">Точка доступа (BSSID):</td>
++                            <td><code>${lastRecord.bssid || '—'}</code></td>
++                        </tr>
++                        <tr>
++                            <td class="text-muted">Радиоканал / Стандарт:</td>
++                            <td>Канал ${lastRecord.channel || '—'} (${lastRecord.standard || '802.11'})</td>
++                            <td class="text-muted">Средняя скорость линка:</td>
++                            <td>Приём: <strong>${avgRx} Мбит/с</strong> / Передача: <strong>${avgTx} Мбит/с</strong></td>
++                        </tr>
++                        <tr>
++                            <td class="text-muted">Сетевой интерфейс:</td>
++                            <td>${lastRecord.interface || 'Беспроводная сеть'}</td>
++                            <td class="text-muted">Статус роуминга:</td>
++                            <td>${flappingSummary}</td>
++                        </tr>
++                    </tbody>
++                </table>
++            </div>
++
++            <!-- Таблица зафиксированных инцидентов -->
++            <div class="mb-4">
++                <h6 class="fw-bold mb-2">2. Журнал прерываний связи и сбоев</h6>
++                <table class="table table-sm">
++                    <thead>
++                        <tr>
++                            <th style="width: 10%;">#</th>
++                            <th style="width: 30%;">Время начала сбоя</th>
++                            <th style="width: 30%;">Время восстановления</th>
++                            <th style="width: 30%;">Статус</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        ${outageRowsHtml}
++                    </tbody>
++                </table>
++            </div>
++
++            <!-- Итоговое экспертное заключение -->
++            <div class="p-3 rounded-3 mb-4" style="background: rgba(6, 182, 212, 0.08); border-left: 4px solid #06b6d4;">
++                <h6 class="fw-bold text-info mb-2">3. Экспертное резюме для руководства</h6>
++                <div class="small" style="line-height: 1.6;">
++                    ${executiveConclusion}
++                </div>
++            </div>
++
++            <!-- Подпись инженера / сисадмина -->
++            <div class="d-flex justify-content-between align-items-end pt-4 mt-4 border-top">
++                <div class="small text-muted">
++                    Анализ проведён автоматически модулем <strong>GoOverseer/WIFI</strong>.<br>
++                    Автор архитектуры: <em>StrangeFragment 2©26</em>
++                </div>
++                <div class="text-end" style="min-width: 260px;">
++                    <div class="small text-muted mb-3">Подпись технического специалиста:</div>
++                    <div class="border-bottom border-dark pb-1 text-center" style="font-family: monospace;">
++                        _______________________ / _________________
++                    </div>
++                </div>
++            </div>
++        </div>
++    `;
+ }
 diff --git a/utils/wifi/wifi_worker.go b/utils/wifi/wifi_worker.go
 index 67f355e..fbaaf8a 100644
 --- a/utils/wifi/wifi_worker.go
@@ -2793,10 +3121,10 @@ index 80a5bbd..d478b60 100644
 +	return 0, true
 +}
 diff --git a/web/static/css/app.css b/web/static/css/app.css
-index e69de29..bea8bd6 100644
+index e69de29..77368e0 100644
 --- a/web/static/css/app.css
 +++ b/web/static/css/app.css
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,443 @@
 +/* ==========================================================================
 +   GoOverseer Modern UI Dashboard Theme
 +   Dark Cyber/Glassmorphism Design System
@@ -3171,6 +3499,74 @@ index e69de29..bea8bd6 100644
 +  color: #60a5fa;
 +  border: 1px solid rgba(59, 130, 246, 0.4);
 +  font-weight: 600;
++}
++
++/* Стили для чистой печати и экспорта отчёта руководству в PDF */
++@media print {
++  body {
++    background: #ffffff !important;
++    color: #111827 !important;
++    padding: 0 !important;
++    font-size: 10pt !important;
++  }
++  .navbar-custom, .footer-fixed, .nav-tabs, .btn, .toast-container-custom, .modal-backdrop, .modal-header .btn-close, #wifiTab {
++    display: none !important;
++  }
++  .modal {
++    position: static !important;
++    display: block !important;
++    overflow: visible !important;
++    padding: 0 !important;
++  }
++  .modal-dialog {
++    max-width: 100% !important;
++    width: 100% !important;
++    margin: 0 !important;
++  }
++  .modal-content {
++    background: #ffffff !important;
++    color: #111827 !important;
++    border: none !important;
++    box-shadow: none !important;
++    padding: 0 !important;
++  }
++  .modal-footer {
++    display: none !important;
++  }
++  .report-print-container {
++    background: #ffffff !important;
++    color: #111827 !important;
++    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
++  }
++  .report-print-container table {
++    width: 100% !important;
++    border-collapse: collapse !important;
++    margin-top: 10px !important;
++    margin-bottom: 15px !important;
++  }
++  .report-print-container th,
++  .report-print-container td {
++    border: 1px solid #d1d5db !important;
++    padding: 6px 10px !important;
++    color: #111827 !important;
++    font-size: 9.5pt !important;
++  }
++  .report-print-container th {
++    background: #f3f4f6 !important;
++    font-weight: bold !important;
++  }
++  .report-kpi-card {
++    border: 1px solid #e5e7eb !important;
++    background: #f9fafb !important;
++    color: #111827 !important;
++    padding: 12px !important;
++    border-radius: 6px !important;
++  }
++  .badge {
++    border: 1px solid #9ca3af !important;
++    color: #111827 !important;
++    background: transparent !important;
++  }
 +}
 diff --git a/web/static/js/app.js b/web/static/js/app.js
 index 06f6584..c52e6cd 100644
